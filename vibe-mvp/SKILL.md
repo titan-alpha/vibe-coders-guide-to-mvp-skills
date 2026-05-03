@@ -126,6 +126,28 @@ The configurator is a small Vite + React app distributed at `https://vibecodersg
 
   **The carve-out for the user**: only ask the user to validate things that are *subjective* and *cannot be machine-checked*. Examples worth asking: *"Here's a screenshot of the welcome email I'd send &mdash; want me to send a real one to your inbox so you can confirm it looks right?"* / *"Does this color palette feel on-brand to you?"* / *"This 404 page copy &mdash; on-brand or too snarky?"*. Anything else &mdash; routes return 2xx, no console errors, contrast passes WCAG, the signup flow works end-to-end, the layout is unchanged at every breakpoint &mdash; the agent verifies itself and reports the result.
 
+- **Compliance posture — research the user's vertical, surface the framework.** For any project not in `quick-ship` mode, sub-skill 03 (compliance) actively researches the platform's vertical and surfaces the regulatory framework that's likely to apply &mdash; **the user is a non-engineer, often a non-lawyer, and won't know to ask**. The agent does this research by reading `PROJECT.md` (audience + idea), the codebase (what's collected), and matching against:
+  - **B2C consumer**: GDPR (any EU user), CCPA/CPRA (any CA user), COPPA (any user under 13), state-by-state US privacy laws (Virginia VCDPA, Colorado CPA, Utah UCPA, Connecticut CTDPA — converging fast on a GDPR-lite baseline).
+  - **B2C regulated industry**: HIPAA (PHI / health data), FERPA (student records tied to an institution), GLBA (consumer financial data), state-level regulated practices (HIPAA-equivalent for telehealth, state-licensed insurance/legal/medical advice).
+  - **B2B / Enterprise**: SOC 2 Type II (the de-facto trust currency for any SaaS selling into mid-market+), ISO 27001 (international equivalent, more common in Europe / regulated buyers), HIPAA BAAs if any customer's data could be PHI, PCI-DSS if payment data flows through.
+  - **Any payment**: PCI-DSS — Stripe Checkout drops you to SAQ A; rolling your own card form makes you SAQ D and a target.
+
+  The agent says, plainly: *"Based on what you described, this product is likely subject to \<frameworks\>. Here's what each means in concrete dollars / time / legal exposure if ignored: \<short list\>. We don't have to do all of it for MVP, but you should know about it now &mdash; some choices we make in the next few skills (data storage, auth, sub-processors) get cheaper if we make them with these in mind from day one."*
+
+  **Mode gate**: skipped for `quick-ship` (a weekend prototype isn't going to pass an audit anyway, and naming SOC 2 to a hobbyist is noise). Mandatory for everything else.
+
+- **Logging discipline — production vs test.** Logs are operational evidence in production and a debugging aid in tests; the two have different rules and **the agent enforces the distinction**.
+
+  **In tests** (NODE_ENV=test, or vitest/playwright runs): verbose `debug`-level logs are fine. Test runs are short-lived, no one reads the output unless something failed, no log retention. The agent uses generous `console.debug` in helpers and tests to make red runs easy to diagnose.
+
+  **In production** (NODE_ENV=production): `info` is the floor for normal operations, `warn` for anomalies that don't break the user, `error` for things the agent or oncall should look at. **No `debug` ever.** Logs are paid storage on Vercel / Cloudwatch / wherever; high-cardinality debug noise is wasted spend and a needle-in-haystack problem when something actually breaks.
+
+  **Sensitive data never in logs, ever.** Not in any environment. The agent uses a single structured logger (sub-skill 11 sets one up &mdash; pino in Node, structured `console.*` calls everywhere else) with a redaction allowlist that strips: passwords, password hashes, API keys (`sk_*`, `re_*`, `pk_*`, `whsec_*`, `phc_*`, `SG.*`, `Bearer *`), session tokens, full email addresses (log `user.id` instead, or hash the email), Stripe customer IDs (log internal `user.id`), full credit-card-like strings, IP addresses for non-security logs, request bodies on routes that take PII.
+
+  Before committing any new logging call, the agent checks: *would this line embarrass us if it appeared in a screenshot of an error report?* If yes, redact.
+
+  Sub-skill 11 ships the actual logger setup + redaction utility; sub-skill 17 ship-checklist verifies prod log level + greps recent logs for accidental secret leakage before declaring ship-ready.
+
 - **Visual regression workflow.** Once sub-skill 02 has scaffolded the test rig:
   1. After any UI-affecting change, run `npm run test:visual`. Playwright captures fresh screenshots at every defined breakpoint and compares pixel-by-pixel to stored baselines under `tests/e2e/<spec>.spec.ts-snapshots/`.
   2. **Pixel-matched** screenshots produce no output. The agent does not re-inspect them. This is what makes the workflow cheap.
