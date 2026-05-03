@@ -199,7 +199,7 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
     2. **Platform title** &mdash; next to the logo, semibold, in the curated display font.
     3. **Theme toggle** &mdash; right-aligned, icon-only (sun / moon / monitor). Cycles light → dark → system. Skip only if the user opted for a single-mode product in DIALOGUE Q5.
     4. **Bell icon** &mdash; right of the theme toggle. **ONLY** rendered if the project has a notification center (sub-skill 07's Notifications tab). Shows unread count as a small badge. Click &rarr; dropdown with the 10 most recent notifications + a "View all" link.
-    5. **Hamburger menu** &mdash; rightmost. Opens a dropdown containing every top-level page, plus a **"Settings"** link at the bottom (which goes to `/settings` &mdash; a per-user page where signed-in users edit name, password, notification preferences). For projects without auth, omit Settings.
+    5. **Hamburger menu** &mdash; rightmost. Opens a dropdown containing every top-level page, plus a **"Settings"** link at the bottom (which goes to `/settings` &mdash; a per-user page where signed-in users edit name, password, notification preferences). For projects without auth, omit Settings. **Plus a "Feedback" item** (when sub-skill 07's feedback collection is enabled). Click opens the feedback modal &mdash; see sub-skill 07 for the form spec.
 
     **Don't add nav links to the header itself &mdash; all of those go in the hamburger.** The header stays clean: identity (logo + title) on the left, controls (theme + bell + hamburger) on the right. This rule supersedes any older "2&ndash;5 primary product surfaces in the header" guidance.
 
@@ -482,6 +482,7 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
 - Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.yaml # Decisions` with the reasoning.
 - Header has the up-to-5-element layout (logo, title, theme toggle, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
+- Hamburger menu includes a "Feedback" item when feedback collection is enabled in sub-skill 07. The item opens the modal defined there.
 - Both light and dark themes ship by default and pass WCAG AA contrast in both modes. The header theme toggle cycles light → dark → system and persists to `localStorage`.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
 - A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, theme modes (light/dark/both), the core user journey sentence, and any flow-critique items deferred to post-MVP.

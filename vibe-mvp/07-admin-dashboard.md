@@ -20,6 +20,17 @@ Then, in the same exchange, ask about notifications:
 
 If the user opts out of notifications: skip Tab 5 entirely AND tell them to inform sub-skill 02 to leave out the bell icon (or note in `STATE.yaml` `# Decisions`: "Notification center: skipped — header has no bell icon").
 
+Then, in the same exchange, ask about feedback collection:
+
+> *"One more thing while we're here — want me to wire a feedback collection system? Three pieces:*
+> *(a) A 'Feedback' item in the hamburger menu, opens a small form;*
+> *(b) 2–3 contextual feedback prompts I'll propose based on your product (e.g., a 'how did this go?' prompt after a key user action);*
+> *(c) A Feedback tab in this admin dashboard so you can search, filter, and reply.*
+>
+> *It's the cheapest way to learn what to build next. OK to include, or skip?"*
+
+If the user opts out of feedback: skip the new tab AND the hamburger item AND the contextual prompts. Record in `STATE.yaml # Decisions`: "Feedback collection: skipped".
+
 If the user declines the dashboard altogether, skip and move on to `08-monetization.md`. (For a project with auth, gently flag that without an admin dashboard they'll be running SQL by hand to manage users — they'll likely come back to this.)
 
 ## AUTONOMOUS — analyze the codebase
@@ -295,9 +306,9 @@ Once the change-password flow has succeeded, surface a one-line note in the chat
 
 For better UX (custom login form instead of the browser prompt), build `/admin/login` that POSTs the password to a Route Handler, which sets a signed `admin_session` cookie on success. Middleware then checks the cookie. This is a v1.5 upgrade — basic auth + the change-password flow are enough to ship.
 
-## AUTONOMOUS — build the dashboard with five tabs
+## AUTONOMOUS — build the dashboard with six tabs
 
-`/admin` has five tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
+`/admin` has six tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**, **Feedback**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`. Skip Feedback the same way if feedback collection was declined.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
 
 ```tsx
 // app/admin/layout.tsx
@@ -315,6 +326,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <Link href="/admin/waitlist"      className="tab">Waitlist</Link>
         <Link href="/admin/usage"         className="tab">Usage</Link>
         <Link href="/admin/notifications" className="tab">Notifications</Link>
+        <Link href="/admin/feedback"      className="tab">Feedback</Link>
       </nav>
       {children}
     </main>
@@ -670,6 +682,294 @@ export async function sendNotificationAction(formData: FormData) {
 
 Note: this writes only to the in-app notification surface. If the founder also wants emails to go out, they should pick the matching trigger in sub-skill 04's email-trigger analysis (e.g., add a "Custom admin announcement" trigger to the catalog).
 
+### Tab 6 — Feedback
+
+(Skip this entire section if feedback collection was declined in the opening DIALOGUE — see `STATE.yaml # Decisions`.)
+
+**Database schema additions** to `lib/db/schema.ts`:
+
+```ts
+export const feedback = pgTable('feedback', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),  // null for anonymous
+  surface: text('surface').notNull(),                  // 'general' | <platform-specific surface name>
+  rating: integer('rating'),                            // 1-5 thumbs/stars; null for free-text only
+  category: text('category'),                           // 'bug' | 'idea' | 'praise' | 'other' | platform-specific
+  body: text('body').notNull(),                         // the actual feedback text
+  contextUrl: text('context_url'),                      // page URL the feedback was filed from
+  contextMeta: jsonb('context_meta'),                   // arbitrary JSON: route params, user state, screenshot URL
+  status: text('status').notNull().default('new'),     // 'new' | 'seen' | 'resolved' | 'wontfix'
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  resolvedAt: timestamp('resolved_at'),
+  resolvedBy: text('resolved_by'),                      // 'admin' for now
+  internalNote: text('internal_note'),                  // admin-only follow-up notes
+});
+```
+
+**Admin tab UI** (`app/admin/feedback/page.tsx`):
+
+```tsx
+import { db } from '@/lib/db';
+import { feedback, users } from '@/lib/db/schema';
+import { desc, eq, and, ilike, sql } from 'drizzle-orm';
+import { markStatusAction, addNoteAction } from './actions';
+
+export default async function FeedbackTab({ searchParams }: { searchParams: { q?: string; status?: string; surface?: string } }) {
+  const conditions = [];
+  if (searchParams.q) conditions.push(ilike(feedback.body, `%${searchParams.q}%`));
+  if (searchParams.status) conditions.push(eq(feedback.status, searchParams.status));
+  if (searchParams.surface) conditions.push(eq(feedback.surface, searchParams.surface));
+
+  const rows = await db.select({
+    f: feedback,
+    user: { id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName },
+  })
+    .from(feedback)
+    .leftJoin(users, eq(feedback.userId, users.id))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(desc(feedback.createdAt))
+    .limit(200);
+
+  // Counts for the filter chips
+  const counts = await db.select({
+    status: feedback.status,
+    count: sql<number>`count(*)::int`,
+  }).from(feedback).groupBy(feedback.status);
+
+  return (
+    <section className="space-y-4">
+      <form className="flex flex-wrap gap-2 items-end">
+        <label className="form-control flex-1 min-w-[260px]">
+          <span className="label-text">Search feedback</span>
+          <input name="q" defaultValue={searchParams.q ?? ''} className="input input-bordered" placeholder="anything in the body…" />
+        </label>
+        <select name="status" defaultValue={searchParams.status ?? ''} className="select select-bordered">
+          <option value="">All statuses</option>
+          {['new', 'seen', 'resolved', 'wontfix'].map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select name="surface" defaultValue={searchParams.surface ?? ''} className="select select-bordered">
+          <option value="">All surfaces</option>
+          {/* surfaces are populated from the contextual prompts list — see below */}
+          <option value="general">general</option>
+        </select>
+        <button className="btn btn-primary">Filter</button>
+      </form>
+
+      <div className="flex gap-2 text-xs opacity-70">
+        {counts.map(c => <span key={c.status}>{c.status}: <strong>{c.count}</strong></span>)}
+      </div>
+
+      <ul className="space-y-3">
+        {rows.map(({ f, user }) => (
+          <li key={f.id} className={`p-4 rounded-lg border ${f.status === 'new' ? 'border-primary/40 bg-primary/5' : 'border-base-300/60'}`}>
+            <header className="flex items-baseline justify-between gap-3">
+              <div className="text-sm">
+                {f.rating != null && <span className="badge badge-sm mr-2">{'★'.repeat(f.rating)}</span>}
+                {f.category && <span className="badge badge-ghost badge-sm mr-2">{f.category}</span>}
+                <span className="opacity-70">{f.surface}</span>
+                <span className="opacity-40 ml-2">·</span>
+                <span className="opacity-50 text-xs ml-2">{f.createdAt.toISOString().slice(0, 10)}</span>
+              </div>
+              <div className="text-xs opacity-60">
+                {user ? `${user.firstName ?? ''} ${user.lastName ?? ''} (${user.email})`.trim() : 'anonymous'}
+              </div>
+            </header>
+            <p className="mt-2 whitespace-pre-wrap">{f.body}</p>
+            {f.contextUrl && <a href={f.contextUrl} className="link text-xs opacity-70 mt-1 inline-block">{f.contextUrl}</a>}
+            <footer className="mt-3 flex flex-wrap gap-2 items-center">
+              {(['seen', 'resolved', 'wontfix'] as const).map(s => (
+                <form key={s} action={markStatusAction} className="inline">
+                  <input type="hidden" name="id" value={f.id} />
+                  <input type="hidden" name="status" value={s} />
+                  <button className={`btn btn-xs ${f.status === s ? 'btn-primary' : 'btn-ghost border border-base-300/50'}`}>{s}</button>
+                </form>
+              ))}
+            </footer>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+**Server actions** (`app/admin/feedback/actions.ts`):
+
+```ts
+'use server';
+import { db } from '@/lib/db';
+import { feedback } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { revalidatePath } from 'next/cache';
+
+export async function markStatusAction(formData: FormData) {
+  const id = String(formData.get('id'));
+  const status = String(formData.get('status'));
+  if (!['new', 'seen', 'resolved', 'wontfix'].includes(status)) return;
+  await db.update(feedback).set({
+    status,
+    resolvedAt: status === 'resolved' || status === 'wontfix' ? new Date() : null,
+    resolvedBy: status === 'resolved' || status === 'wontfix' ? 'admin' : null,
+  }).where(eq(feedback.id, id));
+  revalidatePath('/admin/feedback');
+}
+
+export async function addNoteAction(formData: FormData) {
+  const id = String(formData.get('id'));
+  const note = String(formData.get('internalNote') ?? '').trim() || null;
+  await db.update(feedback).set({ internalNote: note }).where(eq(feedback.id, id));
+  revalidatePath('/admin/feedback');
+}
+```
+
+### User-facing feedback form
+
+This is the form that the hamburger menu item opens. **The form fields adapt to the platform.** Default fields (always present):
+
+- **Body** (textarea, required, 10–2000 chars).
+- **Category** (radio: Bug / Idea / Praise / Other).
+- **Rating** (1–5, optional — show only if the agent thinks it's relevant; SaaS tools often skip, content platforms often include).
+
+**The agent decides per-platform** which fields and which categories make sense. Read `PROJECT.md` audience and idea, then propose to the user:
+
+> *"For your platform, I'd put these fields on the feedback form: \<list\>. Category options: \<list\>. The rating field would be \<included / omitted\> because \<reason\>. Sound right?"*
+
+For example, a developer tool might use categories `Bug | Feature request | Docs unclear | Other`. A creative platform might include a `Compliment a creator` category.
+
+Implementation (`components/FeedbackModal.tsx` — drop-in client component):
+
+```tsx
+'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+
+export function FeedbackModal({ open, onClose, surface = 'general' }: { open: boolean; onClose: () => void; surface?: string }) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  if (!open) return null;
+
+  async function submit(formData: FormData) {
+    setSubmitting(true);
+    formData.set('surface', surface);
+    formData.set('contextUrl', window.location.href);
+    const r = await fetch('/api/feedback', { method: 'POST', body: formData });
+    setSubmitting(false);
+    if (r.ok) { setDone(true); setTimeout(() => { setDone(false); onClose(); router.refresh(); }, 1500); }
+  }
+
+  return (
+    <dialog open className="modal modal-open">
+      <div className="modal-box max-w-md">
+        <h3 className="text-lg font-semibold">Send feedback</h3>
+        {done ? (
+          <p className="mt-4 text-success">Thanks — we read every one of these.</p>
+        ) : (
+          <form action={submit} className="space-y-3 mt-4">
+            <div className="flex gap-2">
+              {/* Categories — agent customizes this list per platform */}
+              {['Bug', 'Idea', 'Praise', 'Other'].map(c => (
+                <label key={c} className="cursor-pointer">
+                  <input type="radio" name="category" value={c.toLowerCase()} required className="hidden peer" />
+                  <span className="btn btn-sm btn-ghost border border-base-300/60 peer-checked:btn-primary">{c}</span>
+                </label>
+              ))}
+            </div>
+            <textarea name="body" required minLength={10} maxLength={2000} rows={5}
+              className="textarea textarea-bordered w-full" placeholder="Tell us what's on your mind…" />
+            <div className="modal-action">
+              <button type="button" className="btn btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+              <button className="btn btn-primary" disabled={submitting}>{submitting ? 'Sending…' : 'Send'}</button>
+            </div>
+          </form>
+        )}
+      </div>
+      <form method="dialog" className="modal-backdrop"><button onClick={onClose}>close</button></form>
+    </dialog>
+  );
+}
+```
+
+**API endpoint** (`app/api/feedback/route.ts`):
+
+```ts
+import { auth } from '@/auth';
+import { db } from '@/lib/db';
+import { feedback } from '@/lib/db/schema';
+import { limiters, clientKey } from '@/lib/rate-limit';
+import { z } from 'zod';
+
+const Schema = z.object({
+  surface: z.string().min(1).max(64),
+  category: z.enum(['bug', 'idea', 'praise', 'other']),  // or whatever the agent customized to
+  body: z.string().min(10).max(2000),
+  rating: z.coerce.number().int().min(1).max(5).optional(),
+  contextUrl: z.string().url().optional(),
+});
+
+export async function POST(req: Request) {
+  // Rate-limit feedback to stop drive-by spam (per-IP, generous).
+  const r = await limiters.general.limit(clientKey(req));
+  if (!r.success) return Response.json({ error: 'rate_limited' }, { status: 429 });
+
+  const session = await auth();
+  const fd = await req.formData();
+  const parsed = Schema.safeParse(Object.fromEntries(fd));
+  if (!parsed.success) return Response.json({ error: 'invalid', issues: parsed.error.issues }, { status: 400 });
+
+  await db.insert(feedback).values({
+    userId: session?.user?.id ?? null,
+    surface: parsed.data.surface,
+    category: parsed.data.category,
+    body: parsed.data.body,
+    rating: parsed.data.rating ?? null,
+    contextUrl: parsed.data.contextUrl ?? null,
+  });
+
+  return Response.json({ ok: true });
+}
+```
+
+### Platform-unique feedback surfaces
+
+The agent **analyzes the product and proposes 2–3 contextual feedback prompts**. Read `PROJECT.md` (idea + audience + MVP slice). Match against patterns:
+
+| Platform pattern | Suggested contextual surface |
+| --- | --- |
+| User-generated content (recipes, posts, listings) | After view: "How was this {item}?" thumbs up/down |
+| AI feature with subjective output (image generation, summaries, recommendations) | Inline thumb up/down on each AI response with optional comment |
+| Workflow tool with discrete tasks completed | After task complete: "Did this take more time than expected?" |
+| Long-form content / tutorials / docs | Bottom-of-page: "Was this helpful?" yes/no/partially |
+| Onboarding flow | After completion of first 60-second flow: "Anything confusing?" |
+| Empty / error states | "We're sorry — tell us what you were trying to do?" |
+| Admin dashboard / data view | "Find this view useful?" thumb up/down with optional comment |
+
+Propose to the user:
+
+> *"For your platform, the most valuable feedback surfaces would be:*
+> *1. \<surface 1 + one-sentence rationale\>*
+> *2. \<surface 2 + one-sentence rationale\>*
+> *3. \<surface 3 + one-sentence rationale\>*
+>
+> *Each one shows a tiny prompt at the right moment, captures the response, tags it with the surface name so you can filter in the admin tab. Keep all 3, drop one, swap one?"*
+
+Then implement each as a small `<FeedbackPrompt surface="X" />` client component that, on click, opens the same `FeedbackModal` with a pre-filled `surface` prop. Each prompt is one or two lines of JSX in the relevant page/component.
+
+Persist the agreed list in `STATE.yaml # Decisions` as `feedback_surfaces: [<list>]`.
+
+### Hamburger menu wiring (cross-references sub-skill 02)
+
+Add a "Feedback" link to the hamburger menu (defined in 02-design item #10). The link is a button (not a nav link) that opens `<FeedbackModal surface="general" />`.
+
+```tsx
+// Inside the hamburger menu component:
+<button onClick={() => setFeedbackOpen(true)} className="menu-item">
+  <MessageCircle className="w-4 h-4" /> Feedback
+</button>
+{feedbackOpen && <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />}
+```
+
 ## Hand-off to the header bell icon (sub-skill 02)
 
 The bell icon lives in the global header rule defined by sub-skill 02 (design). This admin sub-skill owns the data layer and the API contract; sub-skill 02 owns the front-end rendering of the bell, the dropdown, and the unread badge.
@@ -779,7 +1079,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 
 - `ADMIN_PASSWORD_BOOTSTRAP` was generated, shown once, and used for the first login; the user has since changed it via `/admin/change-password` and the persistent bcrypt hash is stored in `admin_settings.password_hash`. `INITIAL_USAGE_GRANT` is in `.env.local` (and Vercel env after deploy), gitignored.
 - Visiting `/admin` without credentials returns 401.
-- Visiting `/admin` with the correct password renders the five-tab dashboard (four tabs if notifications were skipped).
+- Visiting `/admin` with the correct password renders the six-tab dashboard (subtract a tab for each of Notifications and Feedback that were skipped).
 - **Overview** renders 4–6 KPIs with real data.
 - **Users** lists users; Add User works (sends invite if email is configured, whitelists otherwise); Grant +N works; Deactivate / Reactivate works.
 - **Waitlist** lists pending entries; Approve moves the email to `allowedEmails` (and sends an invite if email is configured); Reject works.
@@ -788,6 +1088,8 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 - DB has `notifications` and `notification_recipients` tables.
 - The three header bell endpoints (`/api/notifications/unread-count`, `/api/notifications/recent`, `/api/notifications/mark-read`) exist and return correct data for the signed-in user.
 - `STATE.yaml # Decisions` records whether notifications are enabled (so sub-skill 02 knows whether to render the bell).
+- Feedback collection is wired (or explicitly skipped, recorded in `STATE.yaml`).
+- If wired: `feedback` schema exists; `/admin/feedback` tab works (search, filter by status, mark seen/resolved/wontfix); `/api/feedback` endpoint accepts submissions, rate-limited; hamburger menu has the Feedback item; agreed contextual prompts are placed at the surfaces decided with the user; `feedback_surfaces` list is in `STATE.yaml # Decisions`.
 - Any new instrumentation is documented under `# Decisions` in `PROJECT.md`.
 
 Move on to `08-analytics.md` (or skip to `09-monetization.md` if analytics aren't in scope for this mode).

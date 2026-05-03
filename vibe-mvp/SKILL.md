@@ -206,7 +206,7 @@ After the user confirms, mirror the assessment into `STATE.yaml`'s skill plan (`
 4. `04-auth.md` — Signup, login, sign-out, email verification, password reset; waitlist + invite modes; signup form with full field set + consent checkboxes that link to the docs from sub-skill 03.
 5. `05-ai-integration.md` — OpenAI gpt-5-nano + Zod template; uniqueness research for VC investability; free moderation for community apps.
 6. `06-chatbot.md` — *Optional.* Persistent AI navigation assistant in the bottom-right.
-7. `07-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with **Overview / Users / Waitlist / Usage / Notifications tabs**: KPIs, add-user, approve from waitlist, grant usage (per user or global), deactivate, send notifications.
+7. `07-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with **Overview / Users / Waitlist / Usage / Notifications / Feedback tabs**: KPIs, add-user, approve from waitlist, grant usage (per user or global), deactivate, send notifications, and search/filter feedback collected from the hamburger menu and platform-unique surfaces.
 8. `08-analytics.md` — *Optional.* Investor KPIs (DAU/MAU/retention/MRR/North Star) and/or product analytics (funnels, feature usage). Self-hosted in Postgres, or PostHog/Plausible. Adds an Analytics tab to the admin dashboard.
 9. `09-monetization.md` — *Optional.* **Free beta vs paid beta** decision; AdSense for content sites; Stripe Checkout for paid beta with product creation via the Stripe API.
 10. `10-accessibility.md` — WCAG 2.2 AA pass. Non-negotiable.
