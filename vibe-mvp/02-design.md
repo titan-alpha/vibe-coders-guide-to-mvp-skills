@@ -8,7 +8,7 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 2. **Reference.** "Name one site or app whose aesthetic you'd be proud to be compared to." If they can't name one, suggest 3 from different ends of the spectrum (e.g., Linear, Stripe, Notion, Are.na, Vercel) and ask which feels right.
 3. **Density.** "Spacious and breathable, or dense and informational?"
 4. **Color.** "Do you want a single accent color, or a gradient identity? Any colors you absolutely want or want to avoid?"
-5. **Light/dark.** "Light only, dark only, or both with system default?"
+5. **Theme modes.** *Default is **both light and dark**, respecting the user's system preference, with a manual toggle in the header.* Confirm with the user — they can opt for light-only or dark-only if there's a strong product reason (e.g., a dev tool that's "always dark"). The default is not a question; it's a sensible default the user can override.
 
 ## Order of decisions (do these in sequence)
 
@@ -18,7 +18,7 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 2. Pick the color scheme &mdash; informed by color-theory analysis (six dimensions, see Item #2 below), then propose 2 palettes, user picks.
 3. Pick the display font &mdash; from the curated list, matched to tone.
 4. Pick the logo (see item #9 below).
-5. Build the header with the 4-element rule (see item #10 below).
+5. Build the header with the up-to-5-element rule (see item #10 below).
 6. Then everything else &mdash; type scale, spacing, components.
 
 Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 is mechanical; the agent just builds it.
@@ -26,7 +26,46 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 ## AUTONOMOUS — set up the design system
 
 1. **Stack:** Next.js 15 (App Router) + Tailwind v4 + DaisyUI. If the project is not yet scaffolded, run `npx create-next-app@latest . --typescript --tailwind --app --eslint --no-src-dir --turbopack --import-alias "@/*"`, then install DaisyUI: `npm install -D daisyui@latest` and add `@plugin "daisyui";` to `app/globals.css`.
-2. **Theme:** generate a custom DaisyUI theme that reflects the mood and color answers, **anchored to the tone label picked in the Order of decisions step**. Provide both light and dark unless the user opted out. Put the theme in `globals.css` via `@plugin "daisyui/theme"`. Use **OKLCH** values throughout.
+2. **Theme:** generate a custom DaisyUI theme that reflects the mood and color answers, **anchored to the tone label picked in the Order of decisions step**. **Always produce both a light and a dark variant** (unless the user explicitly opted for one-only in DIALOGUE Q5). Put the theme in `globals.css` via `@plugin "daisyui/theme"`. Use **OKLCH** values throughout.
+
+   The dark variant is not a recoloring of the light one — both must be palette-aware: pick swap-pairs so primary/accent stay readable against `base-100` in either mode (i.e., dark mode primary often needs +0.10 L; surface needs to drop from ~0.98 L to ~0.18 L). Re-run the WCAG AA contrast check on **both** variants — every text/background pair has to clear 4.5:1 in both.
+
+   **System preference is the default**; users get whatever their OS is set to. Wire the manual toggle in the header (see Item #10) so users can override per-session, persisted to `localStorage`. The toggle pattern:
+
+   ```tsx
+   // components/ThemeToggle.tsx
+   'use client';
+   import { useEffect, useState } from 'react';
+   import { Moon, Sun, Monitor } from 'lucide-react';
+
+   type Mode = 'light' | 'dark' | 'system';
+
+   export function ThemeToggle() {
+     const [mode, setMode] = useState<Mode>('system');
+     useEffect(() => {
+       const saved = (localStorage.getItem('theme') as Mode | null) ?? 'system';
+       apply(saved); setMode(saved);
+     }, []);
+     function apply(m: Mode) {
+       const dark = m === 'dark' || (m === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+       document.documentElement.dataset.theme = dark ? 'vibedark' : 'vibelight';
+       localStorage.setItem('theme', m);
+     }
+     function next() {
+       const order: Mode[] = ['system', 'light', 'dark'];
+       const m = order[(order.indexOf(mode) + 1) % order.length];
+       setMode(m); apply(m);
+     }
+     const Icon = mode === 'dark' ? Moon : mode === 'light' ? Sun : Monitor;
+     return (
+       <button onClick={next} className="btn btn-ghost btn-sm btn-square" aria-label={`Theme: ${mode}`} title={`Theme: ${mode}`}>
+         <Icon className="w-4 h-4" />
+       </button>
+     );
+   }
+   ```
+
+   To prevent a flash-of-wrong-theme on first paint, set `data-theme` from a tiny inline `<script>` in `app/layout.tsx`'s `<head>` that reads `localStorage` synchronously (bog-standard pattern; the agent writes it).
 
    Color rubric by tone &mdash; agent proposes 1&ndash;2 palettes, user picks:
    - **Editorial** &mdash; muted neutrals + one strong accent (often a deep blue, oxblood, or forest green).
@@ -154,14 +193,15 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
 10. **Header and footer content &mdash; know what belongs where.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Keep the header clean; put everything informational in the footer.
 
-    **Header &mdash; exactly 4 elements, always. This is non-negotiable.**
+    **Header &mdash; up to 5 elements, in this order. This is non-negotiable.**
 
     1. **Platform logo** &mdash; left, links to `/`.
     2. **Platform title** &mdash; next to the logo, semibold, in the curated display font.
-    3. **Bell icon** &mdash; right-aligned. **ONLY** rendered if the project has a notification center (sub-skill 07's Notifications tab). Shows unread count as a small badge. Click &rarr; dropdown with the 10 most recent notifications + a "View all" link.
-    4. **Hamburger menu** &mdash; rightmost. Opens a dropdown containing every top-level page, plus a **"Settings"** link at the bottom (which goes to `/settings` &mdash; a per-user page where signed-in users edit name, password, notification preferences). For projects without auth, omit Settings.
+    3. **Theme toggle** &mdash; right-aligned, icon-only (sun / moon / monitor). Cycles light → dark → system. Skip only if the user opted for a single-mode product in DIALOGUE Q5.
+    4. **Bell icon** &mdash; right of the theme toggle. **ONLY** rendered if the project has a notification center (sub-skill 07's Notifications tab). Shows unread count as a small badge. Click &rarr; dropdown with the 10 most recent notifications + a "View all" link.
+    5. **Hamburger menu** &mdash; rightmost. Opens a dropdown containing every top-level page, plus a **"Settings"** link at the bottom (which goes to `/settings` &mdash; a per-user page where signed-in users edit name, password, notification preferences). For projects without auth, omit Settings.
 
-    **Don't add nav links to the header itself &mdash; all of those go in the hamburger.** The header stays clean: identity (logo + title) on the left, alerts (bell) and access (hamburger) on the right. This rule supersedes any older "2&ndash;5 primary product surfaces in the header" guidance.
+    **Don't add nav links to the header itself &mdash; all of those go in the hamburger.** The header stays clean: identity (logo + title) on the left, controls (theme + bell + hamburger) on the right. This rule supersedes any older "2&ndash;5 primary product surfaces in the header" guidance.
 
     **Footer (everything discoverable but non-essential):**
     - About, Contact (or a `/contact` form, or just `hello@<domain>`).
@@ -238,6 +278,186 @@ Share the critique. Ask: *"Want me to apply these now, or keep what's there and 
 
 Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJECT.md` &mdash; they often come back after user testing.
 
+## AUTONOMOUS — set up the test rig (do this BEFORE leaving 02)
+
+Sub-skill 02 is the last skill where the project is "small enough to install dev tooling without breaking anything." Every later skill writes tests against this rig.
+
+This section is non-negotiable. The user does not test the product (see SKILL.md operating rules); the agent does. The rig must be in place before that work begins.
+
+### 1. Install
+
+```bash
+npm install -D vitest @vitest/ui jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event
+npm install -D @playwright/test playwright @axe-core/playwright
+npx playwright install chromium firefox webkit
+```
+
+### 2. Directory layout (create these now, even if empty)
+
+```
+project-root/
+├── tests/
+│   ├── unit/                          # Vitest, isolated logic + components
+│   │   └── .gitkeep
+│   ├── integration/                   # Vitest, hits DB / external SDKs
+│   │   └── .gitkeep
+│   └── e2e/                           # Playwright
+│       ├── routes.ts                  # shared route manifest (used by crawl + visual + a11y)
+│       ├── helpers/                   # auth fixtures, factories, test users
+│       ├── flows/                     # journey specs (signup → core → sign-out)
+│       │   └── .gitkeep
+│       ├── crawl.spec.ts              # added by 16-e2e-testing
+│       ├── a11y.spec.ts               # added by 09-accessibility (was 10-accessibility — confirm via STATE.yaml's mode plan)
+│       └── visual.spec.ts             # screenshot regression
+└── tests/e2e/visual.spec.ts-snapshots/  # baseline screenshots, committed to git
+```
+
+The `-snapshots` directory naming is Playwright's built-in convention for `toHaveScreenshot()`. Don't rename it.
+
+### 3. Configs
+
+`vitest.config.ts`:
+```ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./tests/unit/setup.ts'],
+    include: ['tests/unit/**/*.test.{ts,tsx}'],
+  },
+});
+```
+
+Add a separate `vitest.integration.config.ts` for `tests/integration/**` that uses `environment: 'node'` and a real DB connection from `.env.test` — the integration suite is allowed to be slow (≥ a few seconds per test) because it's catching real-boundary bugs.
+
+`playwright.config.ts` (extend the one from sub-skill 16):
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: true,
+    timeout: 120_000,
+  },
+  use: {
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
+    trace: 'retain-on-failure',
+  },
+  // 5 breakpoints — see 16-e2e-testing.md for why these specific viewports.
+  projects: [
+    { name: 'mobile-sm', use: { ...devices['iPhone SE'] } },
+    { name: 'mobile-lg', use: { ...devices['iPhone 14'] } },
+    { name: 'tablet',    use: { ...devices['iPad Mini'] } },
+    { name: 'desktop',   use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } },
+    { name: 'wide',      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } } },
+  ],
+  // Visual regression tolerance: pixel-diff with a strict threshold.
+  // 0.01 = up to 1% of pixels may differ before failing. Sub-pixel font
+  // anti-aliasing on different OSes can cause false positives below this.
+  expect: {
+    toHaveScreenshot: { maxDiffPixelRatio: 0.01, animations: 'disabled' },
+  },
+});
+```
+
+### 4. npm scripts (paste into `package.json`)
+
+```json
+{
+  "scripts": {
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit:watch": "vitest --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test",
+    "test:visual": "playwright test tests/e2e/visual.spec.ts",
+    "test:visual:update": "playwright test tests/e2e/visual.spec.ts --update-snapshots",
+    "test:a11y": "playwright test tests/e2e/a11y.spec.ts",
+    "test:crawl": "playwright test tests/e2e/crawl.spec.ts"
+  }
+}
+```
+
+### 5. The first visual baseline (lock the design surface BEFORE any feature code)
+
+Before exiting 02, the agent runs:
+
+```bash
+npm run test:visual
+```
+
+The first run has no baselines, so Playwright captures and saves. The agent commits these baselines to git:
+
+```bash
+git add tests/e2e/visual.spec.ts-snapshots/
+git commit -m "02-design: lock visual baselines for landing + theme toggle"
+```
+
+These become the reference every later skill diffs against. When a skill intentionally changes the UI, the agent runs `npm run test:visual:update` only **after inspecting each diff** to confirm the change was wanted (see SKILL.md's Visual regression workflow rule).
+
+### 6. The first three tests (templates every later skill copies)
+
+Write these three before exiting 02 so subsequent skills have a pattern to follow. Each is the simplest possible example of its layer.
+
+```ts
+// tests/unit/format.test.ts — unit test template
+import { describe, it, expect } from 'vitest';
+import { formatPrice } from '@/lib/format';
+
+describe('formatPrice', () => {
+  it('formats cents as dollars', () => {
+    expect(formatPrice(2000)).toBe('$20.00');
+  });
+});
+```
+
+```ts
+// tests/integration/db.test.ts — integration test template
+import { describe, it, expect, beforeAll } from 'vitest';
+import { db } from '@/lib/db';
+import { users } from '@/lib/db/schema';
+
+beforeAll(async () => {
+  // Reset to a known state; uses .env.test DATABASE_URL pointing at a sandbox DB.
+  await db.delete(users);
+});
+
+describe('users table', () => {
+  it('round-trips an insert', async () => {
+    const [u] = await db.insert(users).values({
+      email: 't@example.com', firstName: 'T', lastName: 'T',
+    }).returning();
+    expect(u.email).toBe('t@example.com');
+  });
+});
+```
+
+```ts
+// tests/e2e/visual.spec.ts — visual regression template
+import { test, expect } from '@playwright/test';
+import { ROUTES } from './routes';
+
+for (const route of ROUTES.filter(r => !r.auth)) {
+  test(`visual: ${route.path}`, async ({ page }) => {
+    await page.goto(route.path);
+    await page.waitForLoadState('networkidle');
+    // The toHaveScreenshot matcher captures on first run, diffs on later runs.
+    // Filename is auto-derived: tests/e2e/visual.spec.ts-snapshots/<test name>-<project>.png
+    await expect(page).toHaveScreenshot();
+  });
+}
+```
+
+### 7. Tell the user (one line, then exit)
+
+> *"Test rig is set up. From here on, every skill writes its own tests as it builds — you won't need to test anything except subjective things like 'does this email look right?' I'll run the suite and only flag things that need your eye."*
+
 ## Anti-patterns to avoid
 
 - Inventing custom color tokens before the theme is locked.
@@ -248,7 +468,9 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - Animations on every element. Reserve motion for state changes (reveal, success, error).
 - Stock illustrations. Use type, color, and whitespace instead.
 - Mixing icon libraries &mdash; one of anything is fine, two of anything is a smell.
-- Putting nav links directly in the header. Top-level pages live inside the hamburger dropdown; the header has 4 elements only.
+- Putting nav links directly in the header. Top-level pages live inside the hamburger dropdown; the header has at most 5 elements (logo, title, theme toggle, bell-if-notifications, hamburger).
+- Shipping a single-theme product without explicit user confirmation. Both light and dark are the default; only deviate when the user has a strong product reason.
+- Building the dark variant by inverting the light one. Dark themes need their own L-curve adjustments; recoloring with negative-of-light produces low-contrast surfaces.
 - Defaulting to the system stack as the display font, or picking a color palette before the tone label is named. Tone first, then palette and font.
 - Picking colors by feel without checking contrast ratios or cultural connotations. The agent always proposes palettes that pre-pass WCAG AA &mdash; accessibility is a *constraint* on color choice, not a follow-up audit.
 
@@ -259,8 +481,10 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - `public/favicon.svg` exists and renders correctly as both the favicon (browser tab) and the inline header logo.
 - A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
 - Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.yaml # Decisions` with the reasoning.
-- Header has the 4-element layout (logo, title, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
+- Header has the up-to-5-element layout (logo, title, theme toggle, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
+- Both light and dark themes ship by default and pass WCAG AA contrast in both modes. The header theme toggle cycles light → dark → system and persists to `localStorage`.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
-- A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, the core user journey sentence, and any flow-critique items deferred to post-MVP.
+- A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, theme modes (light/dark/both), the core user journey sentence, and any flow-critique items deferred to post-MVP.
+- Test rig is scaffolded: Vitest (unit + integration), Playwright (e2e), axe-core, baseline screenshot dir under `tests/e2e/visual.spec.ts-snapshots/`. The three template tests (unit, integration, visual) exist and pass. `npm run test` runs the full suite. Visual baselines for the landing page in both light and dark are committed to git.
 
 Move on to `03-compliance.md`.

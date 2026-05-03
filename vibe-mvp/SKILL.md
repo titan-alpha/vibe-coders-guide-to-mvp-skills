@@ -117,6 +117,22 @@ The configurator is a small Vite + React app distributed at `https://vibecodersg
 - **Simplest viable solution first.** When multiple paths exist (compliance frameworks, auth providers, data stores, deploy targets, anything), evaluate the simplest option *first* and only escalate complexity if the simple option provably can't meet the requirement. Don't pre-optimize for problems the user doesn't have yet. Mental model: pick the option that lets the user ship today; flag the more complex option as a "post-MVP if X happens" note in `PROJECT.md`.
 - **Suggest visual review via localhost.** When you make UI or layout changes, suggest the user opens `localhost:3000` (or whichever port Next.js picked) in a browser to watch alongside you. Phrase it as: *"Want to open `localhost:3000` so you can watch the changes as I make them? It builds confidence and we'll catch issues early."* Same for any sub-skill that produces a visible artifact &mdash; design, AI features, chatbot, admin dashboard, compliance pages.
 
+- **Tests are agent-owned.** The user is a non-engineer; do not ask them to test. The agent writes tests, runs tests, reads test output, and reads visual regression diffs. Three layers:
+  - **Unit tests** for isolated logic (helpers, utilities, single components in isolation). Vitest. Fast, run on every change.
+  - **Integration tests** for code that crosses a boundary &mdash; database queries, third-party SDK calls (Stripe, Resend, OpenAI), auth flows that touch the DB. Vitest with a real (or sandboxed) DB. Run before commits, before deploy.
+  - **End-to-end tests** for user journeys, accessibility, page-level rendering, and **visual regression**. Playwright + axe-core + Playwright's built-in `toHaveScreenshot()` for pixel-diff. Run before deploy, after major changes.
+  
+  Sub-skill 02 scaffolds the test rig (Vitest config, Playwright config, axe wiring, baseline storage, npm scripts). Every sub-skill after that **writes tests for what it ships before exiting**. Sub-skill 16 is the final pass: re-runs the whole suite, inspects only flagged regression diffs.
+
+  **The carve-out for the user**: only ask the user to validate things that are *subjective* and *cannot be machine-checked*. Examples worth asking: *"Here's a screenshot of the welcome email I'd send &mdash; want me to send a real one to your inbox so you can confirm it looks right?"* / *"Does this color palette feel on-brand to you?"* / *"This 404 page copy &mdash; on-brand or too snarky?"*. Anything else &mdash; routes return 2xx, no console errors, contrast passes WCAG, the signup flow works end-to-end, the layout is unchanged at every breakpoint &mdash; the agent verifies itself and reports the result.
+
+- **Visual regression workflow.** Once sub-skill 02 has scaffolded the test rig:
+  1. After any UI-affecting change, run `npm run test:visual`. Playwright captures fresh screenshots at every defined breakpoint and compares pixel-by-pixel to stored baselines under `tests/e2e/<spec>.spec.ts-snapshots/`.
+  2. **Pixel-matched** screenshots produce no output. The agent does not re-inspect them. This is what makes the workflow cheap.
+  3. **Mismatched** screenshots fail the test and write a diff PNG to `test-results/`. The agent reads each diff with the `Read` tool and judges: *intentional* (run `npm run test:visual -- --update-snapshots` to bake the new appearance into the baseline) or *regression* (fix the code).
+  4. New baselines are committed to git so future runs and other contributors share the same source of truth.
+  5. Never bulk-update baselines without inspecting each diff &mdash; that's how silent regressions ship.
+
 ## Bootstrap (after the mode is locked, before sub-skill 01)
 
 **If the project directory is empty (new project):**

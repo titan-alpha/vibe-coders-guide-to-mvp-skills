@@ -1,244 +1,161 @@
-# 16 · E2E Testing
+# 16 · E2E Testing — Final Regression Pass
 
-Goal: drive the MVP end-to-end with a real browser, page by page, and ship nothing without three passes:
+Goal: re-run the test suite that has been built incrementally across every prior sub-skill (since the rig was scaffolded in 02), confirm everything still works at the public URL, and surface only the visual diffs that need a human eye. The user does not test; the agent does.
 
-- **Pass A — Flow tests.** The user can complete the journey (signup → core feature → sign-out).
-- **Pass B — Per-page functional crawl.** Every route loads, has no console errors, no broken links, all interactive elements are reachable.
-- **Pass C — Per-page visual audit.** Screenshot every route on every breakpoint and grade each against a structured rubric.
+This sub-skill is **not** where the suite gets created. The suite was created in 02 and grew sub-skill by sub-skill — every feature added between 03 and 15 already shipped with its own unit, integration, and visual tests (per SKILL.md's "Tests are agent-owned" operating rule).
 
-All three run against `localhost:3000` first; Pass A repeats against the production URL after deploy (sub-skill 13).
+What this sub-skill does:
+
+- **Pass A — Run the full suite.** Vitest unit + integration + Playwright e2e + axe a11y + visual regression.
+- **Pass B — Functional crawl.** Walk every route in the shared manifest, assert no console errors, no broken links, every interactive element reachable.
+- **Pass C — Visual regression review.** Inspect ONLY the screenshots that failed pixel-diff against their stored baselines. Never bulk-update; never re-inspect anything that pixel-matched.
+- **Pass D — Production smoke.** Re-run the journey tests against the deployed URL to catch deploy-only regressions.
 
 ## DIALOGUE — confirm with the user
 
-Browser automation will open visible windows and exercise every flow, including auth and any AI features. Confirm before kicking off.
+Browser automation will open visible windows, exercise every flow, and use a clearly-marked test account. Confirm before kicking off.
 
-> *"I'd like to run end-to-end tests with a real browser in three passes: flow tests, a per-page functional crawl, and a per-page visual audit. The first two are automated and fast (~2 min); the visual audit takes me 5–10 minutes because I'll look at every screenshot and grade it against a rubric. OK to start?"*
+> *"I'm going to run the full test suite — unit, integration, end-to-end, accessibility, and visual regression. Most of it runs without me looking at anything (it's just pass / fail). Visual regression is the one place where I'll spend a few minutes inspecting any screenshots that don't match the stored baseline. If a change was intentional I update the baseline; if it's a regression I fix it. The whole thing takes ~5 minutes the first time. OK to start?"*
 
-If the user has data isolation concerns, ask whether to test against staging or production. If they don't have a staging env, point at production but use a clearly-marked test account (e.g., `e2e+<timestamp>@<domain>`).
+If the user has data isolation concerns, ask whether to test against staging or production. For production, use a clearly-marked test account (`e2e+<timestamp>@<domain>`).
 
-## AUTONOMOUS — set up Playwright
-
-```bash
-npm install --save-dev @playwright/test playwright
-npx playwright install chromium
-```
-
-`playwright.config.ts`:
-
-```ts
-import { defineConfig, devices } from '@playwright/test';
-
-export default defineConfig({
-  testDir: './e2e',
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
-  use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
-    screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
-  },
-  projects: [
-    { name: 'mobile-sm', use: { ...devices['iPhone SE'] } },                                                      // 375
-    { name: 'mobile-lg', use: { ...devices['iPhone 14'] } },                                                      // 390
-    { name: 'tablet',    use: { ...devices['iPad Mini'] } },                                                      // 768
-    { name: 'desktop',   use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } },
-    { name: 'wide',      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } } },
-  ],
-});
-```
-
-### Build the route manifest
-
-Both Pass B and Pass C consume the same list. Create `e2e/routes.ts`:
-
-```ts
-// e2e/routes.ts — KEEP IN SYNC WITH app/ AS PAGES ARE ADDED.
-export const ROUTES = [
-  { path: '/',          name: 'home',      auth: false },
-  { path: '/login',     name: 'login',     auth: false },
-  { path: '/about',     name: 'about',     auth: false },
-  { path: '/faq',       name: 'faq',       auth: false },
-  { path: '/privacy',   name: 'privacy',   auth: false },
-  { path: '/terms',     name: 'terms',     auth: false },
-  { path: '/dashboard', name: 'dashboard', auth: true  },
-  // ...add every route in app/ that returns a page (not API routes).
-];
-```
-
-For authed routes, set up `globalSetup` + `storageState` (Playwright docs cover this) so a logged-in session is reused across the crawl + visual passes.
-
-## Pass A — Flow tests
-
-For each user flow in `PROJECT.md`'s MVP slice, write one Playwright spec under `e2e/flows/`.
-
-```ts
-// e2e/flows/01-signup.spec.ts
-import { test, expect } from '@playwright/test';
-
-test('user can sign up and reach the authed shell', async ({ page }) => {
-  const email = `e2e+${Date.now()}@example.com`;
-  await page.goto('/login');
-  // ... finish the flow (magic-link inbox check, OAuth, etc.)
-  await expect(page.locator('[data-testid="user-menu"]')).toBeVisible();
-});
-
-// e2e/flows/02-core.spec.ts — the one feature your MVP exists for
-// e2e/flows/03-signout.spec.ts
-```
-
-What to drive, by feature:
-
-| Feature | What to test |
-| --- | --- |
-| Auth | Sign up (new email), sign in (existing), sign out, magic-link flow if used |
-| MVP core slice | Full happy path from `PROJECT.md`, plus one error path |
-| AI feature (sub-skill 04) | Submit input, get a typed response, check loading + error states |
-| Chatbot (sub-skill 05) | Open, send message, verify reply contains a valid internal link |
-| Admin dashboard (sub-skill 06) | Reject without password (401), accept with password, charts render |
-| 404 / error pages | Visit `/this-does-not-exist`, confirm an on-brand 404 |
-
-Run on localhost first, then production:
+## Pass A — Full local suite
 
 ```bash
-npx playwright test e2e/flows/                                     # localhost
-E2E_BASE_URL=https://<your-domain> npx playwright test e2e/flows/  # production
+npm run test:unit
+npm run test:integration
+npm run test:e2e
 ```
 
-## Pass B — Per-page functional crawl
+Expected outcome:
+- Unit + integration: green. If red, fix the code or update the test (only update if the behavior change was intentional).
+- E2E flow specs: green at `localhost:3000`.
+- Accessibility scan: zero violations on every route in `tests/e2e/routes.ts`. (See sub-skill 09 for the axe wiring.)
 
-This pass walks every route in `e2e/routes.ts` and asserts machine-checkable invariants. No human review needed; failures are concrete.
+If anything is red, fix it before continuing. Never proceed to ship with red tests.
 
-```ts
-// e2e/crawl.spec.ts
-import { test, expect } from '@playwright/test';
-import { ROUTES } from './routes';
-
-for (const route of ROUTES.filter(r => !r.auth)) {
-  test(`crawl: ${route.path}`, async ({ page }) => {
-    const consoleErrors: string[] = [];
-    const failedRequests: string[] = [];
-    page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
-    page.on('requestfailed', r => failedRequests.push(`${r.method()} ${r.url()} ${r.failure()?.errorText}`));
-    page.on('response', r => { if (r.status() >= 400) failedRequests.push(`${r.status()} ${r.url()}`); });
-
-    const response = await page.goto(route.path);
-    expect(response?.status(), 'page must return 2xx').toBeLessThan(400);
-    await page.waitForLoadState('networkidle');
-
-    // Internal-link check: every <a href> on the page resolves.
-    const hrefs = await page.$$eval('a[href]', els =>
-      Array.from(new Set(
-        (els as HTMLAnchorElement[])
-          .map(a => a.getAttribute('href')!)
-          .filter(h => h && !h.startsWith('http') && !h.startsWith('mailto:') && !h.startsWith('tel:') && !h.startsWith('#'))
-      ))
-    );
-    for (const href of hrefs) {
-      const r = await page.request.get(href);
-      expect(r.status(), `internal link ${href} on ${route.path} must resolve`).toBeLessThan(400);
-    }
-
-    // Every visible, non-disabled button is enabled (cheap reachability check).
-    const buttons = await page.locator('button:not([disabled]):visible').all();
-    for (const btn of buttons.slice(0, 20)) {
-      await expect(btn).toBeEnabled();
-    }
-
-    expect(consoleErrors, 'no console errors').toEqual([]);
-    expect(failedRequests, 'no failed requests').toEqual([]);
-  });
-}
-```
-
-Run on at least desktop + mobile-lg:
+## Pass B — Functional crawl
 
 ```bash
-npx playwright test e2e/crawl.spec.ts --project=desktop --project=mobile-lg
+npm run test:crawl -- --project=desktop --project=mobile-lg
 ```
 
-What this catches: 404s, 500s, broken internal links, JS exceptions, missing assets, network failures, disabled buttons that should be enabled. What it doesn't catch: anything visual — that's Pass C.
+The crawl spec (added in 02 as a template, expanded as sub-skills added routes) walks every route in `tests/e2e/routes.ts` and asserts:
 
-## Pass C — Per-page visual audit
+- 2xx response on initial load.
+- No `console.error` entries.
+- No failed network requests (`status >= 400` or `requestfailed`).
+- Every internal `<a href>` resolves.
+- Every visible non-disabled button is reachable.
 
-Take a full-page screenshot of every route, on every breakpoint, then **look at every screenshot** and fill in the rubric below. This is where layout regressions hide.
+Any failure here is a regression that must be fixed before ship. Console errors are especially common after a code change touched logging or a third-party SDK upgraded.
 
-```ts
-// e2e/visual.spec.ts
-import { test } from '@playwright/test';
-import { ROUTES } from './routes';
+## Pass C — Visual regression (the cheap-and-fast loop)
 
-for (const route of ROUTES.filter(r => !r.auth)) {
-  test(`visual: ${route.path}`, async ({ page }, testInfo) => {
-    await page.goto(route.path);
-    await page.waitForLoadState('networkidle');
-    await page.screenshot({
-      path: testInfo.outputPath(`${route.name}.png`),
-      fullPage: true,
-    });
-  });
-}
-```
-
-Run across all five breakpoints:
+This is where the screenshot baselines from 02 onward earn their keep.
 
 ```bash
-npx playwright test e2e/visual.spec.ts \
-  --project=mobile-sm --project=mobile-lg --project=tablet --project=desktop --project=wide
+npm run test:visual
 ```
 
-Screenshots land in `test-results/`. Now **open every one** and grade it against this rubric. You can read images.
+Playwright captures a fresh screenshot for every test × project (5 viewports: mobile-sm, mobile-lg, tablet, desktop, wide) and compares pixel-by-pixel against the stored baselines under `tests/e2e/visual.spec.ts-snapshots/`.
 
-### Per-page rubric — fill in for each route × breakpoint
+**Three outcomes:**
 
-| Criterion | ✅ / 🟡 / ❌ | Evidence (1 sentence) |
-| --- | --- | --- |
-| **Spacing** — consistent vertical rhythm; no cramped zones; no oceanic gaps |  |  |
-| **Text wrap** — no awkward orphans, no mid-word breaks, no overflow past container |  |  |
-| **Visual complexity** — ≤ 1 primary CTA per viewport; ≤ 3 distinct font weights; ≤ 5 colors visible |  |  |
-| **Hierarchy** — eye lands on the intended element first; secondary content visibly secondary |  |  |
-| **Alignment** — shared baseline / grid; no off-grid elements |  |  |
-| **Density** — matches platform type from sub-skill 02 §1 (marketing = airy, app = dense) |  |  |
-| **Mobile parity** — same content on mobile, no horizontal scroll, tap targets ≥ 44×44 |  |  |
-| **Empty / error / loading states** — captured (forced via mock or throttle) and look intentional |  |  |
-| **Brand consistency** — colors, type, logo, voice match the design system from sub-skill 02 |  |  |
+1. **All matched** — nothing to inspect. The agent reports "✅ visual regression: 47 / 47 baselines matched" and moves on. **Do not** open the screenshot files; do not narrate what you would have seen. Pixel-match is the contract; trust it.
 
-Any 🟡 or ❌ becomes a fix. Propose each one to the user before applying:
+2. **Some mismatched** — Playwright writes the failing test name plus three artifacts to `test-results/`: the baseline (`*-expected.png`), the new render (`*-actual.png`), and the diff (`*-diff.png`). The agent **reads each diff PNG** with the `Read` tool. For each one, judge:
 
-> *"On `/dashboard` at the 768px breakpoint, the 'Create' button overlaps the search bar (Alignment: ❌). I'd like to wrap them in a flex column on screens narrower than `md`. OK?"*
+   | What the diff shows | Action |
+   | --- | --- |
+   | Intentional change (a feature you just shipped that legitimately altered the page) | Update the baseline: `npm run test:visual:update -- <test name>`. **Inspect the new baseline once before committing** to confirm it matches expectation. Then `git add tests/e2e/visual.spec.ts-snapshots/` and commit with the reason. |
+   | Layout / styling regression (something broke that shouldn't have) | Fix the code, re-run `npm run test:visual`, repeat until matched. |
+   | False positive from font anti-aliasing or asynchronous animation | Tighten the spec: pre-load the font with `await page.evaluate(() => document.fonts.ready)`; disable specific animations with `animations: 'disabled'` on the screenshot call. Don't loosen the global threshold. |
 
-Fix, redeploy if needed, re-run the relevant test. Repeat until every page × breakpoint has all ✅.
+3. **Mass mismatched** (≥ 30% of baselines failing) — usually means a global stylesheet, theme variable, or font URL changed. Don't update the baselines reflexively; investigate the root cause first. If the change is genuinely intended (e.g., the user redesigned the color palette), bulk-update is fine — but only after confirming the FIRST diff looks correct.
 
-### Force the empty / error / loading states
+### Critical rule
 
-For each core page that has them, force the state in Playwright (mock the API to return `[]`, force a 500, throttle the network to 3G) and screenshot. Don't ship with screenshots only of the happy path.
+**Never run `npm run test:visual:update` without inspecting the diffs first.** That's how silent regressions ship. The whole point of the workflow is that re-runs are cheap because pixel-match is trustworthy. Bulk-updating without inspection breaks that contract.
+
+### Forcing rare states (empty / error / loading)
+
+The visual baselines committed by 02–15 cover happy paths. Edge states need explicit specs:
 
 ```ts
-// Example: empty-state screenshot for a list page
-test('dashboard empty state', async ({ page }, testInfo) => {
+// tests/e2e/visual-states.spec.ts (each sub-skill that ships a list/form should add to this)
+test('dashboard empty state', async ({ page }) => {
   await page.route('**/api/items', r => r.fulfill({ json: [] }));
   await page.goto('/dashboard');
-  await page.screenshot({ path: testInfo.outputPath('dashboard-empty.png'), fullPage: true });
+  await expect(page).toHaveScreenshot();
+});
+
+test('signup form validation error', async ({ page }) => {
+  await page.goto('/signup');
+  await page.click('button[type=submit]'); // submit empty
+  await expect(page).toHaveScreenshot();
 });
 ```
+
+If 02–15 missed these, add them now and capture baselines.
+
+### Light + dark theme coverage
+
+Every visual test must run in BOTH theme modes (sub-skill 02 made dark+light non-negotiable). The pattern:
+
+```ts
+for (const route of ROUTES.filter(r => !r.auth)) {
+  for (const theme of ['vibelight', 'vibedark'] as const) {
+    test(`visual: ${route.path} (${theme})`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem('theme', t === 'vibedark' ? 'dark' : 'light'), theme);
+      await page.goto(route.path);
+      await page.waitForLoadState('networkidle');
+      await expect(page).toHaveScreenshot();
+    });
+  }
+}
+```
+
+Doubles the baseline count but catches dark-mode-only regressions (the most-common class of UI bug a single-mode test would miss).
+
+## Pass D — Production smoke
+
+After deploy (sub-skill 14), re-run the **flow specs** (not visual — production rendering can differ from localhost in font loading and CDN delivery, so visual baselines are localhost-only).
+
+```bash
+E2E_BASE_URL=https://<your-domain> npm run test:e2e -- tests/e2e/flows/
+```
+
+The journey tests (signup → core feature → sign-out) should pass identically. If they don't, something in the deploy environment is different (env var missing, DNS not propagated, build mode mismatched). Investigate before declaring ship-ready.
+
+## Subjective checks the user must do (the carve-out)
+
+Almost nothing — but a small set of decisions are subjective and need a human eye:
+
+1. **Email rendering**: the agent has been running templates through the dev email-debug helper (sub-skill 04 step 7) which writes rendered HTML to `tmp/emails/`. Now ask: *"Want me to send the welcome email to your real inbox so you can confirm it looks right?"* Send one of each approved trigger. The user replies with approve / tweak / reject. Apply tweaks, re-send if needed.
+2. **Brand vibe pass**: open the deployed site (sub-skill 14) in their browser and ask: *"Look at the landing page and the dashboard. Anything feel off-brand or unexpected?"* This is a single 30-second check; the agent doesn't enumerate every detail.
+3. **One-paragraph copy review**: any user-facing prose the agent wrote without explicit user input (404 page, empty states, marketing sub-headlines) — show it once, ask: *"Anything you'd change?"*
+
+That's the entire user-side test surface. Everything else the agent verifies.
 
 ## Anti-patterns to avoid
 
-- **Snapshot tests with no visual review.** A green test that no human looked at will let a broken layout ship. Always look at the screenshots.
-- **Skipping breakpoints.** "It works on my laptop" ships broken mobile experiences. The five-project config above isn't optional.
-- **Hardcoded selectors that depend on implementation detail.** Prefer `getByRole`, `getByLabel`, `getByTestId`. Add `data-testid` attributes if you need them.
-- **Flaky timing.** Use `expect(locator).toBeVisible()` — never `setTimeout` / `waitForTimeout` to "let things settle."
-- **Letting `e2e/routes.ts` go stale.** Add a comment in the route manifest reminding to update it whenever a page lands. The accessibility scan (sub-skill 09) and both crawl + visual passes share this manifest — staleness silently shrinks coverage.
-- **Skipping authed routes.** Set up `storageState` and run them too.
+- **Re-inspecting matched screenshots.** Pixel-match is the contract. If you find yourself opening a passed baseline "just to be sure," you're undermining the workflow's whole purpose.
+- **Bulk-updating baselines without inspecting each diff.** The single most-common way to ship a silent regression. Always read the diff PNG first.
+- **Snapshot tests with no visual review on the FIRST run.** When a baseline is captured, the agent inspects that baseline once before committing. After that, the pixel-diff loop takes over.
+- **Running `--update-snapshots` to "fix" a flaky test.** Flakiness is a sign of an underlying problem (font loading, animation, network timing). Stabilize the test, don't paper over it.
+- **Visual regression against the production URL.** Localhost only. Production renders can shift due to CDN font caching and don't represent the source-of-truth render.
+- **Asking the user to test something the agent could have verified.** The user's time is spent on subjective decisions only (email rendering, brand, copy). Functional correctness is the agent's job.
+- **Letting the suite go red between sub-skills.** Every sub-skill exits green or it doesn't exit. Don't accumulate failures across skills hoping to fix them in this final pass.
+- **Skipping dark-mode visual coverage.** Both themes ship. Both themes get baselined. Half the visual budget for either-theme-only-mode is the wrong answer.
 
 ## Exit criteria
 
-- **Pass A (flow tests):** green on localhost AND production.
-- **Pass B (functional crawl):** green on every route in `e2e/routes.ts`, on at least `desktop` + `mobile-lg`.
-- **Pass C (visual audit):** rubric filled in for every route × breakpoint, every cell ✅, screenshots saved as evidence under `test-results/`.
-- A `# E2E` section in `PROJECT.md` lists the tested flows, the routes crawled, the breakpoints, and the date of the last clean run.
+- `npm run test` is green: unit + integration + e2e all pass.
+- `npm run test:crawl` is green on every route in `tests/e2e/routes.ts`, on at least desktop + mobile-lg.
+- `npm run test:visual` is green in BOTH light and dark theme — all baselines matched, OR all diffs were inspected and either fixed or rebaselined with the reason captured in the commit message.
+- Production smoke (`E2E_BASE_URL=<prod> npm run test:e2e -- tests/e2e/flows/`) passes.
+- The 1–3 subjective checks for the user (email rendering, brand vibe, copy) have been completed and approved.
+- A `# E2E` section in `PROJECT.md` lists the date of the last clean run, the routes covered, the breakpoints, and any rebaselines committed (with reason).
 
 Move on to `17-ship-checklist.md`.
