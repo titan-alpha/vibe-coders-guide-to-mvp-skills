@@ -191,9 +191,17 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
    **Non-goals at v1:** multiple sizes, animated logos, dark/light variants. One file. Ship.
 
-10. **Header and footer content &mdash; know what belongs where.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Keep the header clean; put everything informational in the footer.
+10. **Header and footer architecture &mdash; positioning, sizing, content rules.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Each has different positioning and a different scope of content. Both are non-negotiable architectural decisions, not aesthetic ones &mdash; **the agent enforces them across every page**.
 
-    **Header &mdash; up to 5 elements, in this order. This is non-negotiable.**
+    ### Header
+
+    **Position: sticky to the top. Never scrolls with content. Always visible. This is non-negotiable.**
+
+    Implementation: `position: sticky; top: 0;` (or `position: fixed; top: 0;` with a body offset to compensate). The header lives in a single shared layout component (Next.js `app/layout.tsx`'s `<header>`); every page renders inside it; no page renders without it.
+
+    **Height: 56px (Tailwind's `h-14`) on every page.** Same height across landing, app shell, admin, /settings, /404, modals. A user navigating between routes should not see the header jump.
+
+    **Content: up to 5 elements, in this order. No exceptions.**
 
     1. **Platform logo** &mdash; left, links to `/`.
     2. **Platform title** &mdash; next to the logo, semibold, in the curated display font.
@@ -203,14 +211,66 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
     **Don't add nav links to the header itself &mdash; all of those go in the hamburger.** The header stays clean: identity (logo + title) on the left, controls (theme + bell + hamburger) on the right. This rule supersedes any older "2&ndash;5 primary product surfaces in the header" guidance.
 
-    **Footer (everything discoverable but non-essential):**
-    - About, Contact (or a `/contact` form, or just `hello@<domain>`).
-    - Terms, Privacy, "Do Not Sell or Share" (from sub-skill 08 if applicable).
-    - Social links (optional, and only if the brand has a real social presence).
-    - Docs, changelog, press (only if they exist).
-    - Copyright line.
+    ### Footer
 
-    The rule: if the user is more likely to *need it once* than to *use it daily*, it belongs in the footer.
+    **Position: at the bottom of every page. Scrolls with content (NOT sticky, NOT fixed). This is non-negotiable.**
+
+    Implementation: the footer is a normal block element at the end of `<main>` (or right after it) inside the shared layout. On short pages it sits below the content; on tall pages the user scrolls past content first then reaches the footer. Use a sticky-footer pattern (`min-h-dvh flex flex-col` on the body, `flex-1` on `<main>`) so on short pages the footer hugs the bottom of the viewport rather than floating mid-page &mdash; but it still scrolls when the page content is tall.
+
+    **Height: uniform across every page** (e.g., `~96px` on desktop, `~140px` on mobile when items wrap). Same on landing, app, admin, errors, /settings. Like the header, it must not jump between routes.
+
+    **Content scope &mdash; what belongs in the footer:**
+
+    The footer holds the *reference surface*: things the user is more likely to need once (look up the policy, find the about page, contact someone) than to use daily. Per-class breakdown:
+
+    | Class | Items | Notes |
+    | --- | --- | --- |
+    | **Identity / copyright** | `&copy; <YEAR> <Product Name>.` | Always present. Year is computed at build time, not hardcoded. Single line, left-aligned (or centered on mobile). |
+    | **Informational** | About, FAQ | Always present whenever an `/about` and `/faq` route exists (sub-skills 02 and 17 typically produce these). Right-aligned (or below copyright on mobile). |
+    | **Legal** | Terms, Privacy, "Do Not Sell or Share" | Always present whenever sub-skill 03 (compliance) ran. The CCPA "Do Not Sell or Share" link is required only if the comply path was chosen and CCPA applies; otherwise drop it. |
+    | **Discoverable but optional** | Contact, Docs, Changelog, Press | Only if those surfaces actually exist. Don't add a "Contact" link that goes to a 404. |
+    | **Social** | X / Bluesky / GitHub icons | Only if the brand has a real social presence. Do not add empty "Coming soon" social cards. |
+
+    **What does NOT belong in the footer:**
+
+    - Primary product nav (those go in the hamburger inside the header).
+    - User-account controls (those live in the header's hamburger Settings item or in the sign-in/out flow).
+    - Calls-to-action (signup, buy now). Footer-CTA fatigue is real and the conversion delta is negligible.
+    - Long marketing-driven sitemaps. If your audience needs a 4-column footer with 30 links, you are not at MVP scope.
+
+    **Order rule for footer items**: when there's a wrap, the order from left to right is identity → informational → legal → optional → social. On mobile the footer stacks; the order top-to-bottom matches.
+
+    The principle &mdash; same as the header &mdash; is: **if the user is more likely to *need it once* than to *use it daily*, it belongs in the footer.** If the user *needs it daily*, it belongs in the hamburger menu inside the header. Items don't appear in both.
+
+    ### Reference implementation
+
+    ```tsx
+    // app/layout.tsx — the shape every project ships
+    export default function RootLayout({ children }: { children: React.ReactNode }) {
+      return (
+        <html lang="en" data-theme="vibelight">
+          <body className="min-h-dvh flex flex-col">
+            <header className="sticky top-0 z-30 h-14 border-b border-base-300/50 bg-base-100/70 backdrop-blur">
+              {/* logo · title · theme toggle · bell · hamburger */}
+            </header>
+            <main className="flex-1">{children}</main>
+            <footer className="border-t border-base-300/50 bg-base-100/70 px-6 py-6 text-sm">
+              <div className="max-w-6xl mx-auto flex flex-wrap gap-4 items-center justify-between">
+                <span className="opacity-70">&copy; {new Date().getFullYear()} {PRODUCT_NAME}.</span>
+                <nav className="flex flex-wrap gap-x-4 gap-y-2 opacity-80">
+                  <a href="/about">About</a>
+                  <a href="/faq">FAQ</a>
+                  <a href="/terms">Terms</a>
+                  <a href="/privacy">Privacy</a>
+                  {/* "Do Not Sell or Share" only if sub-skill 03 chose CCPA comply path */}
+                </nav>
+              </div>
+            </footer>
+          </body>
+        </html>
+      );
+    }
+    ```
 
 11. **One landing/home page first.** Ship a minimal, on-brand landing route before building any feature surface. This anchors the visual direction so everything after it inherits the same language.
 
@@ -469,6 +529,11 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - Stock illustrations. Use type, color, and whitespace instead.
 - Mixing icon libraries &mdash; one of anything is fine, two of anything is a smell.
 - Putting nav links directly in the header. Top-level pages live inside the hamburger dropdown; the header has at most 5 elements (logo, title, theme toggle, bell-if-notifications, hamburger).
+- Letting the header scroll with content. Header is `sticky top-0` and always visible; never `position: static` and never inside `<main>`. If the header disappears when the user scrolls, that's a bug.
+- Making the footer sticky / fixed. Footer scrolls with content — it's a reference surface, not an always-visible chrome. Sticky footers steal viewport real estate that belongs to content.
+- Variable header or footer height between routes. Both must be the same height on every page (header: 56px; footer: ~96px desktop, ~140px mobile when items wrap). A jumping header on navigation is jarring and fixable in one shared layout component.
+- Footer CTAs (signup buttons, "buy now" cards). The footer is reference, not conversion — these belong on the page itself, not the footer of every page.
+- A "footer that holds primary nav." If the user needs it daily, it's not footer material. Move it into the hamburger.
 - Shipping a single-theme product without explicit user confirmation. Both light and dark are the default; only deviate when the user has a strong product reason.
 - Building the dark variant by inverting the light one. Dark themes need their own L-curve adjustments; recoloring with negative-of-light produces low-contrast surfaces.
 - Defaulting to the system stack as the display font, or picking a color palette before the tone label is named. Tone first, then palette and font.
@@ -481,7 +546,8 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - `public/favicon.svg` exists and renders correctly as both the favicon (browser tab) and the inline header logo.
 - A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
 - Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.yaml # Decisions` with the reasoning.
-- Header has the up-to-5-element layout (logo, title, theme toggle, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
+- **Header**: `position: sticky; top: 0` (never scrolls), uniform height of 56px on every page, up to 5 elements (logo, title, theme toggle, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists).
+- **Footer**: scrolls with content (NOT sticky), uniform height across every page, holds only the defined classes — identity (©  YYYY  Product), informational (About, FAQ), legal (Terms, Privacy, "Do Not Sell or Share" if CCPA-comply path), optional links if those surfaces actually exist, social if real presence. No primary nav, no CTAs, no user-account controls in the footer.
 - Hamburger menu includes a "Feedback" item when feedback collection is enabled in sub-skill 07. The item opens the modal defined there.
 - Both light and dark themes ship by default and pass WCAG AA contrast in both modes. The header theme toggle cycles light → dark → system and persists to `localStorage`.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
