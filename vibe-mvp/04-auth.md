@@ -177,51 +177,119 @@ Show the user a markdown table — one row per proposed trigger. Use the same co
 
 For each row, the user can **approve**, **decline**, or **edit** (rename, change firing condition, change copy direction). Capture decisions before generating templates.
 
-### 5. Generate templates autonomously
+### 5. Generate templates autonomously — match the platform's locked identity
 
-For approved triggers, write `lib/email-templates.ts` with one exported function per trigger (e.g., `signupConfirmationHtml(args)`, `lowUsageWarningHtml(args)`, `subscriptionReceiptHtml(args)`). Each template:
+For approved triggers, write `lib/email-templates.ts` with one exported function per trigger (e.g., `signupConfirmationHtml(args)`, `lowUsageWarningHtml(args)`, `subscriptionReceiptHtml(args)`). Emails are a brand surface — they should look like the product, not like generic transactional HTML. Every template **must** conform to the design tokens locked in sub-skill 02.
 
-- Plain HTML, no external CSS or images, ≤ 200 lines.
-- Inline styles only.
-- Mobile-friendly (max-width: 600px container, full-width on small screens).
-- Includes a footer line: *"You're receiving this because you have an account at &lt;product&gt;. &lt;unsubscribe-link&gt;"* — where the unsubscribe link is included only on **marketing-class** emails (digests, re-engagement, milestones), never on transactional ones (receipts, password reset, security alerts).
+**Token-loading note (do this first).** Before writing any template, populate the `TOKENS` constant from the values locked in `STATE.md # Decisions`:
 
-Skeleton:
+- **Tone label** — `editorial` / `tech` / `friendly` / `luxurious` / `playful` / `brutalist`. Used to drive copy voice (see point g below).
+- **Display font** — e.g., `Fraunces`, `Inter Tight`, `Space Grotesk`. Used for H1 and primary CTA.
+- **Primary color** — convert the locked OKLCH value to hex for email-client compatibility.
+- **Neutral / surface colors** — background, foreground, muted, border (all as hex).
+- **Logo** — read `public/favicon.svg`, replace any `var(--…)` fills with the resolved hex colors, then base64-encode it as a `data:image/svg+xml;base64,…` URL.
+
+If sub-skill 02 has not been run (or design tokens are not locked in `STATE.md # Decisions`), **refuse to generate templates**:
+
+> *"I can't generate platform-conforming email templates until the design tokens are locked in sub-skill 02. Want to finish that first, or would you prefer placeholder templates I'll restyle later?"*
+
+You may store the resolved tokens directly in `lib/email-templates.ts` (simplest), or duplicate them in `PROJECT.md` for runtime access if `STATE.md` isn't queryable from server code. Either works — pick what fits the project.
+
+**Each template must:**
+
+a. Read the locked design tokens (above).
+b. **Apply the tokens as CSS custom properties** at the top of every email's outer container, **and** inline the resolved values on every element that uses them — Gmail and other clients are inconsistent about CSS variables, so the inline value is the source of truth and the variable is a progressive enhancement.
+c. **Use the platform display font** for the H1 and primary CTA, with the system fallback chain (`'Inter Tight', system-ui, -apple-system, sans-serif`). Load the Google Font via a `<link>` in the email's `<head>` *and* always inline `font-family` on every element that uses it (Gmail strips `<style>` blocks, so the inline `font-family` is what actually paints).
+d. **Use the locked primary color for the primary CTA button** — never a default blue.
+e. **Inline the platform logo** (16–20px tall) at the top-left next to the platform title in the display font. Use the SVG from `public/favicon.svg`, base64-encoded as a `data:` URL inside the `<img src="…"/>` tag (some clients block external images by default; data URLs render reliably). Resolve any CSS-variable fills in the SVG to hex before embedding.
+f. **Keep the layout simple and elegant**:
+   - Single column.
+   - One H1 (the email's subject restated as the headline).
+   - One paragraph of body copy.
+   - One primary CTA (single button) — never multiple buttons of equal weight.
+   - One muted footer line (sender info + unsubscribe for marketing).
+   - Generous whitespace: 32px padding around the container, 24px between major elements.
+   - No background images, no gradients, no decorative borders. Trust the platform's color and typography to do the work.
+g. **Match the platform's tone in voice.** Read the tone label from `STATE.md` and write copy that matches:
+   - **Friendly** → conversational ("Hey Noa, your account is ready 👋").
+   - **Editorial** → measured prose, full sentences, no exclamations.
+   - **Tech** → terse, factual, no fluff.
+   - **Luxurious** → spare, refined, generous spacing in the copy itself.
+   - **Playful** → energetic, punctuated, light emoji.
+   - **Brutalist** → blunt, uppercase headlines acceptable, no pleasantries.
+
+A footer line is included only on **marketing-class** emails (digests, re-engagement, milestones) with the unsubscribe link — never on transactional ones (receipts, password reset, security alerts).
+
+**Token-application pattern (CSS variables + inline fallback):**
+
+```html
+<div style="--brand-primary: #2563eb; --brand-surface: #f8fafc; --brand-fg: #0f172a; font-family: 'Inter Tight', system-ui, sans-serif; background: #f8fafc; color: #0f172a; max-width: 560px; margin: 24px auto; padding: 32px;">
+  <!-- content -->
+</div>
+```
+
+**Primary CTA pattern (uses the locked primary color):**
+
+```html
+<a href="<actionUrl>" style="display: inline-block; padding: 12px 24px; background: var(--brand-primary, #2563eb); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-family: 'Inter Tight', system-ui, sans-serif;">Confirm your account</a>
+```
+
+**Skeleton — all templates compose from a single `shell()` helper so consistency is enforced by construction:**
 
 ```ts
 // lib/email-templates.ts
-const PRODUCT = process.env.PRODUCT_NAME ?? 'App';
-const UNSUB = (email: string) => `${process.env.AUTH_URL}/account/unsubscribe?email=${encodeURIComponent(email)}`;
+import { readFileSync } from 'node:fs';
 
-const shell = (bodyHtml: string, opts?: { marketing?: boolean; to?: string }) => `
-<!doctype html>
-<html><body style="margin:0;padding:0;background:#f6f6f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#222;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;padding:24px 0;">
-    <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:8px;padding:32px;">
-        <tr><td style="font-size:16px;line-height:1.5;">${bodyHtml}</td></tr>
-        <tr><td style="padding-top:24px;font-size:12px;color:#888;border-top:1px solid #eee;margin-top:24px;">
-          You're receiving this because you have an account at ${PRODUCT}.
-          ${opts?.marketing && opts?.to ? ` <a href="${UNSUB(opts.to)}" style="color:#888;">Unsubscribe</a>.` : ''}
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+// Read the locked tokens once at module load. These come from STATE.md
+// (or duplicate them in PROJECT.md for runtime access if STATE.md isn't
+// queryable from server code — both work; pick what fits the project).
+const TOKENS = {
+  primary: '#2563eb',                    // resolved from STATE.md OKLCH
+  surface: '#f8fafc',
+  fg: '#0f172a',
+  muted: '#64748b',
+  border: '#e2e8f0',
+  displayFont: "'Inter Tight', system-ui, sans-serif",
+  bodyFont: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+  productName: 'Acme',                   // from PROJECT.md # Idea
+  logoDataUrl: '',                       // base64-encoded SVG of public/favicon.svg
+};
+
+function shell(args: { headline: string; bodyHtml: string; ctaText?: string; ctaUrl?: string; footerHtml?: string }) {
+  const { headline, bodyHtml, ctaText, ctaUrl, footerHtml } = args;
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<body style="margin:0;background:${TOKENS.surface};color:${TOKENS.fg};font-family:${TOKENS.bodyFont};line-height:1.55;">
+  <div style="max-width:560px;margin:24px auto;padding:32px;background:#fff;border:1px solid ${TOKENS.border};border-radius:12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:24px;">
+      <tr>
+        <td style="vertical-align:middle;">
+          <img src="${TOKENS.logoDataUrl}" alt="" width="20" height="20" style="vertical-align:middle;display:inline-block;margin-right:8px;">
+          <span style="font-family:${TOKENS.displayFont};font-weight:600;font-size:16px;vertical-align:middle;">${TOKENS.productName}</span>
+        </td>
+      </tr>
+    </table>
+    <h1 style="font-family:${TOKENS.displayFont};font-size:24px;line-height:1.2;margin:0 0 16px 0;color:${TOKENS.fg};">${headline}</h1>
+    <div style="font-size:16px;color:${TOKENS.fg};">${bodyHtml}</div>
+    ${ctaText && ctaUrl ? `
+      <div style="margin:32px 0;">
+        <a href="${ctaUrl}" style="display:inline-block;padding:12px 24px;background:${TOKENS.primary};color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-family:${TOKENS.displayFont};">${ctaText}</a>
+      </div>` : ''}
+    ${footerHtml ? `<hr style="border:none;border-top:1px solid ${TOKENS.border};margin:32px 0 16px 0;"><div style="font-size:13px;color:${TOKENS.muted};">${footerHtml}</div>` : ''}
+  </div>
 </body></html>`;
+}
 
 export function signupConfirmationHtml(args: { firstName: string }) {
-  return shell(`<h1 style="margin:0 0 16px;font-size:22px;">Welcome, ${args.firstName}.</h1>
-    <p>Your ${PRODUCT} account is ready. <a href="${process.env.AUTH_URL}">Sign in to get started</a>.</p>`);
+  return shell({
+    headline: `Welcome to ${TOKENS.productName}, ${args.firstName}.`,
+    bodyHtml: `<p>Your account is ready. Sign in below to get started.</p>`,
+    ctaText: 'Open the app',
+    ctaUrl: process.env.AUTH_URL,
+    footerHtml: `Sent because you signed up at ${TOKENS.productName}.`,
+  });
 }
-
-export function lowUsageWarningHtml(args: { firstName: string; consumed: number; granted: number }) {
-  const pct = Math.round((args.consumed / args.granted) * 100);
-  return shell(`<h1 style="margin:0 0 16px;font-size:22px;">You've used ${pct}% of your quota</h1>
-    <p>Hi ${args.firstName} — you have ${args.granted - args.consumed} of ${args.granted} actions left this period.</p>
-    <p><a href="${process.env.AUTH_URL}/account">Manage your account</a>.</p>`);
-}
-
-// ...one function per approved trigger
+// ... one exported function per approved trigger, all composed from shell().
 ```
 
 ### 6. Wire each template at its trigger point
@@ -623,6 +691,9 @@ For OAuth users, the first sign-in inserts a `users` row with no `passwordHash`.
 - **Pre-ticked marketing consent.** Void under GDPR. Always unticked default.
 - **Storing raw invite/reset tokens in the DB.** Always store `sha256(token)` and discard the raw value after sending it.
 - **Returning a different status from `/reset/request` based on whether the email exists.** That's user enumeration. Always respond `200 ok`.
+- **Generic email templates** — using a default "Roboto / Helvetica + #4f46e5 button" template that doesn't reference the platform's actual locked colors and font. Emails are a brand surface; they should look like the product.
+- **Loading the display font from a `<link>` only.** Gmail strips `<style>` blocks. Always inline `font-family` on every element using the display font, with the system fallback chain.
+- **Using PNG/JPG logos in emails.** Use the SVG (base64-encoded as a data URL) so it scales sharply on retina and dark mode.
 
 ## Exit criteria
 
@@ -635,6 +706,9 @@ For OAuth users, the first sign-in inserts a `users` row with no `passwordHash`.
 - `.env.local` contains every secret used and is gitignored.
 - A line in `PROJECT.md` under `# Decisions` records the chosen auth path, the access mode, and the document versions referenced by signup (`TOS_VERSION`, `PRIVACY_VERSION`).
 - If email is configured, every approved trigger has a template in `lib/email-templates.ts` and a wired call site.
+- Every generated email template uses the locked display font, primary color, and inline-base64 logo from sub-skill 02's design decisions.
+- Templates compose from a single `shell()` helper so the styling is consistent by construction.
+- If sub-skill 02 hasn't locked design tokens, the agent did not generate templates — it stopped and asked.
 - The DEV email-debug helper writes to `tmp/emails/` and is gitignored.
 
 Move on to `05-ai-integration.md`.

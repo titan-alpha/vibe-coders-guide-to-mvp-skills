@@ -15,7 +15,7 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 *Color and font set the platform's voice subconsciously; the logo references both. Doing them in this order means the logo doesn't fight the surrounding language.*
 
 1. Re-read `PROJECT.md`'s `# Idea` and `# Audience` and pick a tone label from this list: **editorial · tech · friendly · luxurious · playful · brutalist**.
-2. Pick the color scheme &mdash; propose 1&ndash;2 palettes, user picks.
+2. Pick the color scheme &mdash; informed by color-theory analysis (six dimensions, see Item #2 below), then propose 2 palettes, user picks.
 3. Pick the display font &mdash; from the curated list, matched to tone.
 4. Pick the logo (see item #9 below).
 5. Build the header with the 4-element rule (see item #10 below).
@@ -37,6 +37,68 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
    - **Brutalist** &mdash; black + white + one neon (yellow, red, magenta).
 
    State the proposed palette(s) and reasoning before applying. The user can override.
+
+   ### Color theory analysis (do this before proposing the palette)
+
+   The per-tone rubric above is the *quick fallback*. Before proposing palettes, walk through these six dimensions of established color theory and write a short note on each. This makes the palette a reasoned choice, not a vibe.
+
+   1. **Color psychology by audience.** Warm hues (red, orange, yellow) bias the viewer toward arousal, urgency, appetite. Cool hues (blue, green, purple) bias toward calm, trust, focus. Neutrals (gray, beige, off-white) bias toward neutrality and let other elements speak. Pick a base orientation that matches the *intended emotional state* of the user when they're using the product. *(Research basis: Mehta &amp; Zhu 2009; Elliot &amp; Maier 2014; Labrecque &amp; Milne 2012.)*
+
+   2. **Cultural color associations for the target audience.** Re-read `PROJECT.md`'s `# Audience` section. If the audience is global or non-Western, check the dominant region's color associations:
+      - **White** &mdash; purity (US/EU); mourning (parts of East Asia).
+      - **Red** &mdash; passion / danger (US/EU); luck / celebration (China); mourning (parts of Africa).
+      - **Yellow** &mdash; caution / cheer (US/EU); royalty (Southeast Asia); mourning (Egypt).
+      - **Green** &mdash; nature / money / "go" (US); Islam / luck (Middle East / Ireland).
+      - **Purple** &mdash; luxury / royalty (most cultures); mourning (Latin America / Thailand).
+      - **Blue** &mdash; trust / corporate (most cultures, the most-universally-liked hue).
+
+      When in doubt, lean blue &mdash; it's the most cross-culturally safe.
+
+   3. **Color harmony scheme.** Pick one of the five canonical harmonies (Itten / Munsell color theory):
+      - **Monochromatic** &mdash; single hue, multiple lightness/saturation values. Calm, focused, easy to balance. Default for editorial / luxurious / brutalist.
+      - **Analogous** &mdash; 3 adjacent hues on the color wheel (e.g., blue, blue-green, green). Harmonious and natural. Good for friendly / wellness / lifestyle.
+      - **Complementary** &mdash; two hues opposite on the wheel (e.g., blue + orange). High contrast, bold, energetic. Use sparingly &mdash; easily becomes loud.
+      - **Triadic** &mdash; three hues evenly spaced (e.g., red, yellow, blue). Vibrant. Default for playful.
+      - **Split-complementary** &mdash; base hue + the two hues adjacent to its complement. Like complementary but softer. Versatile, modern. Good default for tech / SaaS.
+
+   4. **Contrast budget.** WCAG 2.2 AA requires &ge; 4.5:1 contrast for body text and &ge; 3:1 for large text and UI components. Pick foreground/background pairs that *start* above 7:1 (AAA) so the design has headroom for nuance without breaking accessibility. Use OKLCH lightness deltas &mdash; pairs whose `L` values differ by at least 0.50 reliably hit 4.5:1.
+
+   5. **60-30-10 distribution rule.** Healthy palettes follow ~60% neutral / dominant base, ~30% secondary, ~10% accent. Map this to DaisyUI's tokens explicitly:
+      - **60%**: `base-100` (background) and `base-200` (cards / surfaces).
+      - **30%**: `base-content` (text), `neutral` (borders, secondary buttons).
+      - **10%**: `primary` (CTAs, brand moments). Plus tiny doses of `accent` for state highlights (success / warning / error already covered by DaisyUI's `success` / `warning` / `error` semantic tokens &mdash; keep them).
+
+   6. **Vertical / brand-color research.** Quickly think about the dominant color in the product's vertical:
+      - Fintech / banking &rarr; blues, deep greens (trust + money associations).
+      - Healthcare / wellness &rarr; calming greens, soft blues, warm neutrals.
+      - Developer tools &rarr; cool dark themes, electric accents (purple, cyan, lime).
+      - Food / hospitality &rarr; warm earth tones, appetite-stimulating reds/oranges (avoid blue &mdash; research shows blue suppresses appetite).
+      - Fashion / luxury &rarr; near-black + metallic accent.
+      - Children / education &rarr; bright primaries; high saturation.
+
+      *Don't blindly conform &mdash; sometimes contrarian color (e.g., a fintech that goes warm) is the brand differentiator. Note the convention, then decide intentionally.*
+
+   After working through these six points, **propose 2 candidate palettes** in chat as small inline color swatches:
+
+   ```
+   Palette A — "Trust-forward fintech"
+     Primary  oklch(0.55 0.18 240)   #2563eb   ▮ deep electric blue
+     Accent   oklch(0.78 0.15 50)    #f59e0b   ▮ amber
+     Neutral  oklch(0.20 0.01 240)   #0f172a   ▮ near-black slate
+     Surface  oklch(0.98 0.005 240)  #f8fafc   ▮ off-white
+
+   Palette B — "Warmer, optimistic"
+     Primary  oklch(0.55 0.18 240)   ▮ same blue
+     Accent   oklch(0.72 0.20 25)    ▮ coral
+     Neutral  oklch(0.30 0.02 60)    ▮ warm dark brown
+     Surface  oklch(0.97 0.01 90)    ▮ ivory
+   ```
+
+   Then ask:
+
+   > *"Both pass AA contrast and follow the 60-30-10 rule. **A** leans cooler / more authoritative; **B** leans warmer / more approachable. Which fits the audience better &mdash; or want me to iterate on either?"*
+
+   User picks one. Apply it. Note the choice and the reasoning in `STATE.md # Decisions`.
 3. **Icons:** install **Lucide React** (`npm install lucide-react`) and use it for every icon. It has 1400+ icons, perfect stroke consistency, and tree-shakes per-import so bundle stays tiny. Don't mix icon libraries; don't hand-roll SVGs for icons that Lucide already has.
    ```tsx
    import { ArrowRight, Check, Copy } from 'lucide-react';
@@ -188,6 +250,7 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - Mixing icon libraries &mdash; one of anything is fine, two of anything is a smell.
 - Putting nav links directly in the header. Top-level pages live inside the hamburger dropdown; the header has 4 elements only.
 - Defaulting to the system stack as the display font, or picking a color palette before the tone label is named. Tone first, then palette and font.
+- Picking colors by feel without checking contrast ratios or cultural connotations. The agent always proposes palettes that pre-pass WCAG AA &mdash; accessibility is a *constraint* on color choice, not a follow-up audit.
 
 ## Exit criteria
 
@@ -195,6 +258,7 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - `globals.css` contains the locked theme (OKLCH values) and the chosen display font loaded via `@font-face` from Google Fonts.
 - `public/favicon.svg` exists and renders correctly as both the favicon (browser tab) and the inline header logo.
 - A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
+- Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.md # Decisions` with the reasoning.
 - Header has the 4-element layout (logo, title, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
 - A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, the core user journey sentence, and any flow-critique items deferred to post-MVP.
