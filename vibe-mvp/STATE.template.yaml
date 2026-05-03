@@ -109,6 +109,20 @@ mode_changes: []
 # mode_changes:
 #   - { date: "2026-05-10", from: "quick-ship", to: "beta-with-users", reason: "MVP working; ready to invite testers" }
 
+# ── Build session — agent ↔ user channel via the configurator's Build tab ──
+# After hand-off (ready: true), the agent uses this stream to communicate
+# focused questions and status updates back to the user without making them
+# switch to a terminal. The user sees each entry in the configurator's "Build"
+# tab; their responses get written back into the same entry; the agent reads
+# them on its next polling cycle.
+#
+# Message schema and the canonical example for each type live in SKILL.md
+# under "Build channel protocol." This file just holds the live messages.
+build_session:
+  messages: []
+  # Set by the configurator when the user is viewing the Build tab.
+  user_active: false
+
 # ── Hand-off flag from the configurator ───────────────────────────────
 # When the user clicks "Hand off to the agent" in the configurator UI, this
 # becomes true. The agent should detect the change, summarize the locked

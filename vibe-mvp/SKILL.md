@@ -99,6 +99,125 @@ The configurator is a small Vite + React app distributed at `https://vibecodersg
 
 6. **The configurator can be reopened anytime** to revise. The agent should set `ready: false` again whenever it's actively working, then watch for the next hand-off if the user wants to revise mid-build.
 
+### Build channel protocol (use this when the user opted into Path B)
+
+After hand-off, the user might prefer to keep watching the configurator instead of switching to terminal/Claude Desktop/Codex. The configurator's **Build tab** is the agent's communication surface for that case &mdash; focused, low-noise, structured. The agent writes message entries to `STATE.yaml`'s `build_session.messages` array; the user sees each entry rendered in the Build tab; their response is written back into the same entry.
+
+**Use the build channel when**: the user opted into Path B (visual configurator). If they picked Path A (chat), keep using your normal conversational surface.
+
+**The agent's loop while building (Path B users):**
+
+1. Append a status update to `build_session.messages` whenever a sub-skill completes or you start something visible (a fresh deploy, a new schema migration). Status messages don't block.
+2. When you have a question that requires the user, append a question message and **wait** for `answered_at` to appear before continuing. Poll `STATE.yaml` every 5–10 seconds.
+3. When `build_session.user_active` is `false`, throttle status updates to one every 30 seconds &mdash; the user isn't watching, no point flooding the file.
+4. Each message has a stable `id` you generate (`crypto.randomUUID()` or a slugged `<skill-id>:<short-name>`). Don't reuse ids.
+
+**Message types** (the schema lives in `configurator-src/src/lib/state-schema.ts`):
+
+```yaml
+# Status — informational, no response needed.
+- id: 03:tos-shipped
+  type: status
+  level: success                       # info | success | warning | error
+  skill_id: "03-compliance"
+  created_at: "2026-05-04T10:32:00Z"
+  body: "TOS + Privacy live at /terms and /privacy. v2026-05-04 stamped on both."
+
+# Short-answer question.
+- id: 04:invite-cta-text
+  type: short_answer
+  created_at: "2026-05-04T10:35:00Z"
+  question: "What should the invite-email CTA button say? (max ~20 chars)"
+  placeholder: "e.g., 'Set up my account'"
+
+# Long-answer question — for prose or multi-line input.
+- id: 03:privacy-contact
+  type: long_answer
+  created_at: "2026-05-04T10:36:00Z"
+  question: "What contact email should privacy requests go to? Plus a one-line policy note if you want to override the default."
+
+# Multiple choice — with optional "Other" text escape.
+- id: 02:tone-confirm
+  type: multiple_choice
+  created_at: "2026-05-04T10:37:00Z"
+  question: "Pick the tone label that best fits how you want the product to feel."
+  allow_custom: true
+  options:
+    - { value: tech,       label: "Tech",      hint: "Crisp, modern, neutral. Think Linear / Vercel." }
+    - { value: friendly,   label: "Friendly",  hint: "Warm, approachable, lifestyle-leaning." }
+    - { value: editorial,  label: "Editorial", hint: "Considered, serif-leaning, trustworthy." }
+
+# Component pick — render 2–4 design options as sandboxed iframes.
+# Use this for visual identity decisions: button styles, hero layouts,
+# card variants. Each `html` field is a complete HTML fragment (head OK
+# for inline styles + Google Fonts).
+- id: 02:hero-pick
+  type: component_pick
+  created_at: "2026-05-04T10:40:00Z"
+  question: "Two hero treatments, both pre-passing AA contrast. Which feels right?"
+  options:
+    - label: "Centered + bold"
+      description: "Single column, generous whitespace, big serif headline."
+      height_px: 320
+      html: |
+        <html><head><style>body{margin:0;font-family:'Fraunces',serif;background:#fafafa}.h{padding:48px 24px;text-align:center}.h h1{font-size:42px;line-height:1.05;letter-spacing:-0.02em;margin:0 0 12px}.h p{color:#666;font-size:18px;margin:0 auto;max-width:30rem}</style></head><body><div class="h"><h1>Recipes you'll actually cook.</h1><p>500 well-tested home recipes, no scrolling past someone's life story.</p></div></body></html>
+    - label: "Split + image"
+      description: "Two columns, left=copy, right=hero image placeholder."
+      height_px: 320
+      html: |
+        <html><head><style>body{margin:0;font-family:'Inter Tight',system-ui;background:#fafafa}.h{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:48px 24px;max-width:1100px;margin:0 auto;align-items:center}.h h1{font-size:36px;line-height:1.1;letter-spacing:-0.02em;margin:0 0 12px}.h p{color:#666;font-size:17px;margin:0 0 24px}.h .img{aspect-ratio:4/3;background:linear-gradient(135deg,#a855f7,#06b6d4);border-radius:12px}.h .btn{display:inline-block;padding:10px 20px;background:#a855f7;color:#fff;text-decoration:none;border-radius:8px;font-weight:600}</style></head><body><div class="h"><div><h1>Recipes you'll actually cook.</h1><p>500 well-tested home recipes, no scrolling past someone's life story.</p><a class="btn" href="#">Browse recipes</a></div><div class="img"></div></div></body></html>
+
+# Flow review — sequence the user clicks through, approves or notes
+# changes per step. Use for end-to-end flows: signup, checkout, share.
+- id: 04:signup-flow
+  type: flow_review
+  created_at: "2026-05-04T10:50:00Z"
+  question: "Walk through the signup flow and tell me if anything feels off."
+  flow_name: "Signup → first action"
+  steps:
+    - caption: "1. Public landing — primary CTA opens the signup form in a modal."
+      image_url: "data:image/png;base64,..."     # base64 from a Playwright screenshot
+    - caption: "2. Signup form — 4 fields + TOS checkbox."
+      image_url: "data:image/png;base64,..."
+    - caption: "3. Verification email lands; user clicks the link."
+      image_url: "data:image/png;base64,..."
+    - caption: "4. Onboarding: 'How do you plan to use this?' — single question, optional."
+      image_url: "data:image/png;base64,..."
+    - caption: "5. First action: user lands on /create with a guided empty state."
+      image_url: "data:image/png;base64,..."
+```
+
+**The user's response shape** (the agent reads `messages[i].response` + `answered_at` after they reply):
+
+```yaml
+# multiple_choice → response.picked is the option's value, OR '__other__' with response.custom set.
+response: { picked: tech }
+response: { picked: __other__, custom: "Tech but with the Friendly approachability — what would you call that?" }
+
+# short_answer / long_answer → response is the string.
+response: "Set up my account"
+
+# component_pick → response.picked_label matches options[i].label, optional notes.
+response: { picked_label: "Centered + bold", notes: "Make the headline a touch smaller." }
+
+# flow_review → response.approved (true/false) + per_step_notes + overall_notes.
+response:
+  approved: false
+  per_step_notes:
+    - { step_index: 1, note: "Drop the phone-number field; we don't use it." }
+  overall_notes: "Otherwise great."
+```
+
+**Conventions for good build-channel hygiene:**
+
+- One question at a time. Don't append three questions at once and force the user to context-switch.
+- Status updates are informational; don't bury a question inside a status `body` &mdash; use a separate question message so the UI surfaces it as actionable.
+- For component picks, keep `options` to 2&ndash;4 (more is decision fatigue). Always include `description` on each option.
+- For flow reviews, capture screenshots at the relevant viewport (usually `desktop` from the Playwright test rig). For an alternate-mode review (e.g., dark theme), say so in `flow_name`.
+- After the user answers, **read the response immediately** and continue. Don't leave the conversation hanging.
+- If the user answers something differently from what you expected (e.g., picks an option you didn't think they'd pick), accept it and move on &mdash; don't re-question.
+- When you complete the build entirely, post one final `status` message with `level: success` summarizing what shipped + the URL. Then stop appending; the build channel should go quiet when there's nothing left to say.
+
 ## Operating rules (apply to every sub-skill)
 
 - **Credentials live in `.env.local`.** Before asking the user for any secret, `cat .env.local 2>/dev/null` and check whether you already have it. After receiving a new secret, append it (do not overwrite the file). Never commit `.env.local`; ensure it is in `.gitignore`.
