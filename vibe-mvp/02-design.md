@@ -10,16 +10,51 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 4. **Color.** "Do you want a single accent color, or a gradient identity? Any colors you absolutely want or want to avoid?"
 5. **Light/dark.** "Light only, dark only, or both with system default?"
 
+## Order of decisions (do these in sequence)
+
+*Color and font set the platform's voice subconsciously; the logo references both. Doing them in this order means the logo doesn't fight the surrounding language.*
+
+1. Re-read `PROJECT.md`'s `# Idea` and `# Audience` and pick a tone label from this list: **editorial · tech · friendly · luxurious · playful · brutalist**.
+2. Pick the color scheme &mdash; propose 1&ndash;2 palettes, user picks.
+3. Pick the display font &mdash; from the curated list, matched to tone.
+4. Pick the logo (see item #9 below).
+5. Build the header with the 4-element rule (see item #10 below).
+6. Then everything else &mdash; type scale, spacing, components.
+
+Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 is mechanical; the agent just builds it.
+
 ## AUTONOMOUS — set up the design system
 
 1. **Stack:** Next.js 15 (App Router) + Tailwind v4 + DaisyUI. If the project is not yet scaffolded, run `npx create-next-app@latest . --typescript --tailwind --app --eslint --no-src-dir --turbopack --import-alias "@/*"`, then install DaisyUI: `npm install -D daisyui@latest` and add `@plugin "daisyui";` to `app/globals.css`.
-2. **Theme:** generate a custom DaisyUI theme that reflects the mood and color answers. Use OKLCH colors. Provide both light and dark unless the user opted out. Put the theme in `globals.css` via `@plugin "daisyui/theme"`.
+2. **Theme:** generate a custom DaisyUI theme that reflects the mood and color answers, **anchored to the tone label picked in the Order of decisions step**. Provide both light and dark unless the user opted out. Put the theme in `globals.css` via `@plugin "daisyui/theme"`. Use **OKLCH** values throughout.
+
+   Color rubric by tone &mdash; agent proposes 1&ndash;2 palettes, user picks:
+   - **Editorial** &mdash; muted neutrals + one strong accent (often a deep blue, oxblood, or forest green).
+   - **Tech** &mdash; cool/neutral base + electric accent (purple, cyan, lime).
+   - **Friendly** &mdash; warm base + saturated accent (coral, sage, butter yellow).
+   - **Luxurious** &mdash; near-black + gold, or off-white + deep brown.
+   - **Playful** &mdash; high-saturation palette, **3 colors not 1**.
+   - **Brutalist** &mdash; black + white + one neon (yellow, red, magenta).
+
+   State the proposed palette(s) and reasoning before applying. The user can override.
 3. **Icons:** install **Lucide React** (`npm install lucide-react`) and use it for every icon. It has 1400+ icons, perfect stroke consistency, and tree-shakes per-import so bundle stays tiny. Don't mix icon libraries; don't hand-roll SVGs for icons that Lucide already has.
    ```tsx
    import { ArrowRight, Check, Copy } from 'lucide-react';
    <ArrowRight className="w-4 h-4" />
    ```
-4. **Type scale:** one display font (system stack is fine) at 56/40/28/20/**16**. **16px is the floor.** No body text, caption, label, or nav item smaller than 16px (`text-base`). The only allowed exceptions are technical metadata like timestamps, version numbers, or inline code badges &mdash; and even those should prefer 14px (`text-sm`) over smaller. Never ship `text-xs` for readable content. No more than two font weights.
+4. **Type scale:** one **deliberately picked** display font + system-stack body font, at 56/40/28/20/**16**. **16px is the floor.** No body text, caption, label, or nav item smaller than 16px (`text-base`). The only allowed exceptions are technical metadata like timestamps, version numbers, or inline code badges &mdash; and even those should prefer 14px (`text-sm`) over smaller. Never ship `text-xs` for readable content. No more than two font weights.
+
+   **Display font is a tone decision, not a default.** The agent picks based on the platform's emotional tone (audience, mood, vertical from sub-skill 01). Body font stays as the system stack. The picked display font goes in `globals.css` via `@font-face` from Google Fonts (weight subset only).
+
+   Curated display fonts by tone:
+   - **Editorial / serious / publication-like** &mdash; Fraunces (variable serif) or Spectral. Trustworthy, considered.
+   - **Tech / dev tool / SaaS** &mdash; Inter Tight, Geist, or Space Grotesk. Crisp, modern.
+   - **Friendly / consumer / lifestyle** &mdash; General Sans, Plus Jakarta Sans, or DM Sans. Warm, rounded.
+   - **Luxurious / premium** &mdash; Cormorant Garamond or Playfair Display. Elegant, high-contrast.
+   - **Playful / creative** &mdash; Recoleta, S&ouml;hne, or Bricolage Grotesque. Distinctive, expressive.
+   - **Brutalist / technical / raw** &mdash; JetBrains Mono or IBM Plex Mono used as display. Industrial.
+
+   State the choice and reasoning to the user before applying. The user can override.
 5. **Text content is minimal wherever possible.** Cut every word that isn't earning its place. One-sentence descriptions beat paragraphs. Button labels are verbs (`Save`, `Send`, `Create`), not phrases. Headings are the shortest fragment that names the section. Use whitespace and hierarchy instead of prose to convey structure.
 6. **No gradients on buttons or titles.** Solid theme colors only. Gradient backgrounds on interactive elements or headings read as dated and reduce contrast predictability across themes. Gradients are fine for purely decorative background layers (hero glow, illustration accents) &mdash; not for anything the user reads or clicks.
 7. **Spacing:** stick to Tailwind's default scale &mdash; do not invent custom spacing values.
@@ -57,12 +92,14 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 
 10. **Header and footer content &mdash; know what belongs where.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Keep the header clean; put everything informational in the footer.
 
-    **Header (nothing except):**
-    - Logo + wordmark, clickable home.
-    - 2&ndash;5 primary product surfaces &mdash; the *things the user does* (e.g., "Discover", "Library", "Create"). Never more than 5.
-    - Account / auth on the right: sign in button, or avatar + dropdown when signed in.
+    **Header &mdash; exactly 4 elements, always. This is non-negotiable.**
 
-    That's it. Not "About", not "Contact", not "Blog" unless the blog is core to the product, not pricing unless you're actively selling.
+    1. **Platform logo** &mdash; left, links to `/`.
+    2. **Platform title** &mdash; next to the logo, semibold, in the curated display font.
+    3. **Bell icon** &mdash; right-aligned. **ONLY** rendered if the project has a notification center (sub-skill 07's Notifications tab). Shows unread count as a small badge. Click &rarr; dropdown with the 10 most recent notifications + a "View all" link.
+    4. **Hamburger menu** &mdash; rightmost. Opens a dropdown containing every top-level page, plus a **"Settings"** link at the bottom (which goes to `/settings` &mdash; a per-user page where signed-in users edit name, password, notification preferences). For projects without auth, omit Settings.
+
+    **Don't add nav links to the header itself &mdash; all of those go in the hamburger.** The header stays clean: identity (logo + title) on the left, alerts (bell) and access (hamburger) on the right. This rule supersedes any older "2&ndash;5 primary product surfaces in the header" guidance.
 
     **Footer (everything discoverable but non-essential):**
     - About, Contact (or a `/contact` form, or just `hello@<domain>`).
@@ -149,14 +186,17 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - Animations on every element. Reserve motion for state changes (reveal, success, error).
 - Stock illustrations. Use type, color, and whitespace instead.
 - Mixing icon libraries &mdash; one of anything is fine, two of anything is a smell.
+- Putting nav links directly in the header. Top-level pages live inside the hamburger dropdown; the header has 4 elements only.
+- Defaulting to the system stack as the display font, or picking a color palette before the tone label is named. Tone first, then palette and font.
 
 ## Exit criteria
 
 - The user has approved the landing page screenshot or has clicked through it on `localhost`.
-- `globals.css` contains the locked theme.
+- `globals.css` contains the locked theme (OKLCH values) and the chosen display font loaded via `@font-face` from Google Fonts.
 - `public/favicon.svg` exists and renders correctly as both the favicon (browser tab) and the inline header logo.
-- Header contains only logo + primary product nav + account; footer carries About / Contact / legal.
+- A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
+- Header has the 4-element layout (logo, title, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
-- A `# Design` section in `PROJECT.md` captures the chosen mood, reference, color decisions, logo concept, the core user journey sentence, and any flow-critique items deferred to post-MVP.
+- A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, the core user journey sentence, and any flow-critique items deferred to post-MVP.
 
-Move on to `03-auth.md`.
+Move on to `03-compliance.md`.
