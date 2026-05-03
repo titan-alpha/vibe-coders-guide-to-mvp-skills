@@ -283,6 +283,211 @@ export default async function AnalyticsTab() {
 
 Charts: install **recharts** (`npm install recharts`) if not already installed by sub-skill 07. The retention heatmap is a custom grid; the others are stock recharts.
 
+## AUTONOMOUS — backend KPIs (do this regardless of which path you picked)
+
+The instrumentation above tracks user-facing events. The user **also** needs visibility into the *backend* — system health (latency, errors, throughput) and product KPIs measured server-side (signup completion the server actually saw, subscription state from Stripe, AI cost per request). Otherwise the Analytics tab tells half the story.
+
+This section is **non-negotiable** when sub-skill 08 runs. The backend metrics live alongside the frontend ones in the same Analytics admin tab so the founder gets one unified surface.
+
+### 1. Two layers, captured separately
+
+| Layer | What it answers | Examples |
+| --- | --- | --- |
+| **System health** | Is the platform operating correctly? | p50 / p95 / p99 latency per route; 5xx error rate per route; request volume per route; DB query duration; webhook delivery success; background-job success rate; cache hit ratio |
+| **Server-confirmed product KPIs** | Did the user actually achieve the value? | Signup confirmed server-side (vs front-end "submit clicked"); subscription active right now (from Stripe webhooks, not optimistic UI); AI cost per user per day; payments captured vs declined; emails delivered vs bounced |
+
+The server-side product KPIs are the **authoritative** version. Front-end events tell you the user *tried*; backend tells you whether it *worked*. Investors ask for the backend numbers.
+
+### 2. System-health instrumentation (a single middleware does the work)
+
+Wrap every Route Handler with one helper. Captures duration + status + path + method + error class:
+
+```ts
+// lib/request-metrics.ts
+import 'server-only';
+import { db } from '@/lib/db';
+import { requestMetrics } from '@/lib/db/schema';
+import { log } from '@/lib/log';
+
+export async function withMetrics<T>(
+  meta: { route: string; method: string; userId?: string | null },
+  handler: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  let status = 200;
+  let errorClass: string | null = null;
+  try {
+    const result = await handler();
+    return result;
+  } catch (err) {
+    status = (err as { status?: number })?.status ?? 500;
+    errorClass = (err as Error)?.name ?? 'Error';
+    throw err;
+  } finally {
+    const ms = Date.now() - start;
+    // Best-effort write; analytics never blocks the user.
+    db.insert(requestMetrics).values({
+      route: meta.route, method: meta.method, userId: meta.userId ?? null,
+      status, errorClass, durationMs: ms, createdAt: new Date(),
+    }).catch((e) => log.error({ event: 'request_metrics.insert_failed', err: e }));
+  }
+}
+```
+
+Schema:
+
+```ts
+// lib/db/schema.ts (extend)
+export const requestMetrics = pgTable('request_metrics', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  userId: uuid('user_id'),                                 // nullable for anonymous
+  route: text('route').notNull(),                          // canonical e.g., 'POST /api/feedback'
+  method: text('method').notNull(),
+  status: integer('status').notNull(),
+  errorClass: text('error_class'),                         // null on 2xx
+  durationMs: integer('duration_ms').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => ({
+  routeCreatedIdx: index('idx_request_metrics_route_created').on(t.route, t.createdAt.desc()),
+  statusCreatedIdx: index('idx_request_metrics_status_created').on(t.status, t.createdAt.desc()),
+}));
+```
+
+Use it inside Route Handlers:
+
+```ts
+// app/api/feedback/route.ts
+import { withMetrics } from '@/lib/request-metrics';
+import { auth } from '@/auth';
+
+export async function POST(req: Request) {
+  const session = await auth();
+  return withMetrics(
+    { route: 'POST /api/feedback', method: 'POST', userId: session?.user?.id ?? null },
+    async () => {
+      // ... existing handler body ...
+      return Response.json({ ok: true });
+    },
+  );
+}
+```
+
+For Vercel-hosted apps, the platform's own analytics also captures p95 latency and error rate per route — surface that as an embedded panel if the user has a Pro plan; the in-DB version above works on any tier and is the source of truth for the Analytics tab.
+
+### 3. Server-confirmed product KPIs
+
+For each "the user did the thing" moment, instrument the **point where the server confirms it succeeded**, not the click:
+
+| Event | Where to instrument | Why server-side matters |
+| --- | --- | --- |
+| Signup completed | After the `users` row insert + `userConsents` rows are saved (sub-skill 04) | Front-end "submit" can succeed but the row insert can fail (DB constraint, race). |
+| Email verified | When the verify token is consumed in `/reset/confirm` | Front-end click ≠ token actually consumed. |
+| Subscription active | Stripe webhook `customer.subscription.created` / `.updated` (sub-skill 09) | Optimistic UI lies during Stripe processing delays. |
+| Payment captured | Webhook `checkout.session.completed` with `payment_status === 'paid'` | "Buy" click happens before money moves. |
+| AI feature succeeded | Inside `gatedAiCall` (sub-skill 07), only on the success path | Failed AI calls inflate front-end "feature_used" counts. |
+| Email delivered | Resend / SendGrid webhook `email.delivered` (sub-skill 04) | Sent ≠ delivered ≠ opened. |
+| Webhook handled | At the END of each webhook switch case, only on success | Webhook received ≠ webhook handled correctly. |
+
+Each of these calls the same `track()` helper from the self-hosted path, OR posts to PostHog via the same mirror interface — but with an event name that reflects server-confirmation: `signup.confirmed_server`, `subscription.active`, `email.delivered`, etc. The naming distinction matters because the Analytics tab shows both `signup.submitted` (front-end click) and `signup.confirmed_server` (DB write succeeded) as separate funnel steps — the gap between them is your "drop-off where things broke."
+
+### 4. Aggregations the Analytics tab queries
+
+Add four backend panels to the existing Analytics tab (sub-skill 08 step 5). Cache via `unstable_cache` with a 1-minute revalidate (system health is the highest-frequency surface).
+
+```ts
+// lib/analytics-aggregates-backend.ts
+import { unstable_cache } from 'next/cache';
+import { db } from '@/lib/db';
+import { sql } from 'drizzle-orm';
+
+// p50 / p95 / p99 latency per route, last 24h.
+export const getLatencyByRoute = unstable_cache(async () => {
+  return db.execute(sql`
+    select route, method,
+      percentile_cont(0.5)  within group (order by duration_ms) as p50,
+      percentile_cont(0.95) within group (order by duration_ms) as p95,
+      percentile_cont(0.99) within group (order by duration_ms) as p99,
+      count(*)::int as requests
+    from request_metrics
+    where created_at > now() - interval '24 hours'
+    group by route, method
+    order by p95 desc
+  `);
+}, ['backend-latency-by-route'], { revalidate: 60 });
+
+// 5xx error rate per route, last 24h. Anything above 1% is a yellow flag,
+// above 5% is red.
+export const getErrorRateByRoute = unstable_cache(async () => {
+  return db.execute(sql`
+    select route,
+      sum(case when status >= 500 then 1 else 0 end)::float / count(*)::float as error_rate,
+      sum(case when status >= 500 then 1 else 0 end)::int as errors,
+      count(*)::int as requests
+    from request_metrics
+    where created_at > now() - interval '24 hours'
+    group by route
+    having count(*) > 5
+    order by error_rate desc
+  `);
+}, ['backend-error-rate'], { revalidate: 60 });
+
+// Server-confirmed funnel: front-end submitted vs server-confirmed.
+export const getSignupFunnelGap = unstable_cache(async () => {
+  return db.execute(sql`
+    select
+      sum(case when event = 'signup.submitted'         then 1 else 0 end)::int as submitted,
+      sum(case when event = 'signup.confirmed_server'  then 1 else 0 end)::int as confirmed,
+      sum(case when event = 'signup.submitted' then 1 else 0 end) -
+      sum(case when event = 'signup.confirmed_server' then 1 else 0 end) as drop_off
+    from user_actions
+    where created_at > now() - interval '7 days'
+  `);
+}, ['backend-signup-funnel'], { revalidate: 300 });
+
+// AI cost per user per day (sub-skill 07 logs cost in user_actions.properties).
+export const getAiCostPerUser = unstable_cache(async () => {
+  return db.execute(sql`
+    select user_id,
+      date_trunc('day', created_at) as day,
+      count(*)::int as calls,
+      sum((properties->>'cost_usd')::numeric) as cost_usd
+    from user_actions
+    where event = 'ai.call' and created_at > now() - interval '14 days'
+    group by user_id, day
+    order by day desc, cost_usd desc
+    limit 100
+  `);
+}, ['backend-ai-cost-per-user'], { revalidate: 300 });
+```
+
+Render these as a "**Backend**" section above (or alongside) the existing investor + product sections in the Analytics tab:
+
+```tsx
+// app/admin/analytics/page.tsx — add to the existing render
+<section className="space-y-4">
+  <h2 className="text-lg font-semibold">Backend health</h2>
+  <LatencyTable data={latency} />
+  <ErrorRateTable data={errors} />
+</section>
+
+<section className="space-y-4">
+  <h2 className="text-lg font-semibold">Server-confirmed funnels</h2>
+  <SignupGapCard data={signupGap} />
+  <AiCostPerUserTable data={aiCost} />
+</section>
+```
+
+### 5. Retention policy (don't ship a runaway cost)
+
+`request_metrics` accumulates a row per request — at 100K requests/day that's 36M rows/year. Add a daily cleanup job (Vercel Cron or an external scheduler):
+
+```sql
+-- Keep 30 days of request_metrics; aggregate older data into a daily rollup table if needed.
+delete from request_metrics where created_at < now() - interval '30 days';
+```
+
+For projects expecting >1K req/sec, instead of writing every request to Postgres, sample (write 1 in N) or pipe to a dedicated metrics store (ClickHouse, Tinybird). The above design is right for MVP-scale (≤ 100K req/day).
+
 ## AUTONOMOUS — build it (PostHog path)
 
 If the user picked PostHog:
@@ -349,6 +554,9 @@ Plausible auto-tracks page views. No event instrumentation needed for a content 
 - **Custom-rolling a session-replay tool.** That's where PostHog earns its keep — don't reinvent it for an MVP.
 - **Forgetting to wire `lastSignInAt`.** Without it, DAU/WAU/MAU are wrong. Auth.js callback bumps it on every successful sign-in.
 - **Letting analytics writes block user-facing requests.** Always best-effort try/catch.
+- **Frontend-only analytics.** Front-end events tell you the user *tried*; backend tells you whether it *worked*. Ship both, or the Analytics tab tells half the story (and the half investors care about more is the backend half).
+- **Treating front-end "submit" as proof of completion.** `signup.submitted` is a click; `signup.confirmed_server` is the DB write. The gap between them is real and tells you when something's broken.
+- **Writing every request to Postgres past 100K req/day.** Sample (1-in-N) or move to a dedicated metrics store. Don't let the metrics table out-grow the application data.
 
 ## Exit criteria
 
@@ -357,6 +565,7 @@ Plausible auto-tracks page views. No event instrumentation needed for a content 
 - For PostHog: `lib/posthog.ts` is wired and the same `track` interface is exported; events flow through to the PostHog dashboard.
 - For Plausible: the script is in `app/layout.tsx` and the Plausible dashboard shows page views from localhost.
 - The admin dashboard has an **Analytics** tab rendering at least: the North Star number with trend, DAU/signups/key KPIs, and (if internal analytics) at least one funnel chart.
-- A `# Analytics` section in `PROJECT.md` lists: scope (investor / internal / both), tool (self-hosted / PostHog / Plausible), the North Star definition, and the events instrumented.
+- **Backend KPIs are wired** alongside the frontend events: `request_metrics` table + `withMetrics` helper applied to every public Route Handler; server-confirmed product events fire (`signup.confirmed_server`, `subscription.active`, `email.delivered`, etc.); the Analytics tab has a "Backend health" section (latency p50/p95/p99 by route + 5xx error rate by route) and a "Server-confirmed funnels" section (signup gap + AI cost per user). 30-day cleanup job runs.
+- A `# Analytics` section in `PROJECT.md` lists: scope (investor / internal / both), tool (self-hosted / PostHog / Plausible), the North Star definition, the events instrumented (frontend + backend), and the retention policy for `request_metrics`.
 
 Move on to `09-monetization.md`.

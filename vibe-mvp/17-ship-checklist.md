@@ -19,6 +19,25 @@ Tick each one. Anything that fails goes back to the relevant sub-skill.
 - [ ] Open Graph image and tags render correctly (test with https://www.opengraph.xyz/).
 - [ ] No Lorem Ipsum, TODO, or "Welcome to Next.js" anywhere.
 
+### Versioning (verifies SKILL.md semver rule + sub-skill 14)
+
+- [ ] `package.json` `version` is **not** the framework default (typically `0.1.0` from `create-next-app`). It's been bumped to reflect actual releases.
+- [ ] The version was bumped from the previous deploy. Check:
+      ```bash
+      LAST=$(git describe --tags --abbrev=0 --match='v*' 2>/dev/null)
+      CURR=$(node -p "require('./package.json').version")
+      echo "previous tag: $LAST"
+      echo "current package.json: v$CURR"
+      ```
+      If `v$CURR` matches `$LAST`, the bump didn't happen — go back to sub-skill 14.
+- [ ] A matching `vX.Y.Z` git tag exists for the current `package.json` version:
+      ```bash
+      git tag -l "v$(node -p "require('./package.json').version")"
+      ```
+      Expected: a single line with the tag name. If empty, run `git tag -a v$VERSION -m v$VERSION && git push --follow-tags`.
+- [ ] `CHANGELOG.md` has a section for the current version with at least one user-visible bullet (Added / Changed / Deprecated / Removed / Fixed / Security).
+- [ ] `STATE.yaml`'s `decisions.released_versions` has an entry for this version with date + URL.
+
 ### Hygiene
 
 - [ ] `.env.local` is gitignored and never committed.

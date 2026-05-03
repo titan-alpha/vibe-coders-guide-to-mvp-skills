@@ -245,6 +245,24 @@ response:
 
   **The carve-out for the user**: only ask the user to validate things that are *subjective* and *cannot be machine-checked*. Examples worth asking: *"Here's a screenshot of the welcome email I'd send &mdash; want me to send a real one to your inbox so you can confirm it looks right?"* / *"Does this color palette feel on-brand to you?"* / *"This 404 page copy &mdash; on-brand or too snarky?"*. Anything else &mdash; routes return 2xx, no console errors, contrast passes WCAG, the signup flow works end-to-end, the layout is unchanged at every breakpoint &mdash; the agent verifies itself and reports the result.
 
+- **Versioning discipline — semver (vX.Y.Z), bumped on every deploy.** Anything in this project that has a public surface gets a `vMAJOR.MINOR.PATCH` version that follows [SemVer](https://semver.org/). The agent enforces this, the user doesn't have to know the rules.
+
+  **What gets versioned**: `package.json`'s `version` field (always); the deployed app (via git tag matching `package.json`); any HTTP API the user exposes (`/api/v1/...` URL prefix from day one); database migrations (numbered + immutable, never edit a shipped migration); the skill bundle the project was built with (recorded in `STATE.yaml # Decisions`).
+
+  **What does NOT get semver**: legal documents (Terms / Privacy use date stamps like `2026-05-04` because they're timestamped not semantically incremented); marketing copy; in-flight feature branches.
+
+  **Bump rules** (the agent picks the right part automatically when bumping for a release):
+
+  | Bump | When | Examples |
+  | --- | --- | --- |
+  | **MAJOR** (`v1.x.y → v2.0.0`) | Breaking change anyone integrating against would notice. Removed an API field, changed a response shape, dropped a route, renamed an env var, schema migration that requires user action. | `/api/v1/users` returns one fewer field; `AUTH_SECRET` env renamed to `SESSION_SECRET`; user-facing URL `/recipes/:slug` changed to `/r/:slug`. |
+  | **MINOR** (`v1.2.x → v1.3.0`) | Backwards-compatible new feature. New endpoint, new optional field, new page, new admin tab. Existing integrations keep working. | New `/api/v1/feedback` route added; `users` table gains an optional `intended_use` column; the Notifications admin tab ships. |
+  | **PATCH** (`v1.2.3 → v1.2.4`) | Backwards-compatible fix or non-functional change. Bug fix, copy tweak, dependency bump that doesn't change behavior, perf improvement, security patch. | Sign-up button no longer double-submits; "loaign" typo fixed; `next` upgraded from 15.0.4 to 15.0.5. |
+
+  **Pre-MVP**: start at `v0.1.0`. The `0.x.y` range signals "API can break in any release." Once the user is ready to call something stable (typically at first beta with paying / depending users), bump to `v1.0.0`. Sub-skill 14 (deploy) handles the bump + git tag at release time. Sub-skill 17 (ship checklist) verifies the bump happened.
+
+  **CHANGELOG**: a `CHANGELOG.md` at the repo root, [Keep a Changelog](https://keepachangelog.com/) format. The agent writes one entry per version, grouped under `### Added / Changed / Deprecated / Removed / Fixed / Security`. The next-version "Unreleased" section accumulates entries as work happens; a deploy promotes them to the new version's heading.
+
 - **Compliance posture — research the user's vertical, surface the framework.** For any project not in `quick-ship` mode, sub-skill 03 (compliance) actively researches the platform's vertical and surfaces the regulatory framework that's likely to apply &mdash; **the user is a non-engineer, often a non-lawyer, and won't know to ask**. The agent does this research by reading `PROJECT.md` (audience + idea), the codebase (what's collected), and matching against:
   - **B2C consumer**: GDPR (any EU user), CCPA/CPRA (any CA user), COPPA (any user under 13), state-by-state US privacy laws (Virginia VCDPA, Colorado CPA, Utah UCPA, Connecticut CTDPA — converging fast on a GDPR-lite baseline).
   - **B2C regulated industry**: HIPAA (PHI / health data), FERPA (student records tied to an institution), GLBA (consumer financial data), state-level regulated practices (HIPAA-equivalent for telehealth, state-licensed insurance/legal/medical advice).

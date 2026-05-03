@@ -138,6 +138,96 @@ VERCEL_TOKEN=… npx vercel --prod --yes
 
 Capture the production URL.
 
+## AUTONOMOUS — bump version, write CHANGELOG entry, tag the release
+
+Per SKILL.md's versioning operating rule, every deploy gets a `vMAJOR.MINOR.PATCH` bump. The agent does this **before** triggering the platform deploy so the deployed artifact is associated with a known version.
+
+### 1. Pick the bump type
+
+Read the diff since the last tag (or since the initial commit if there's no tag yet). Classify the changes:
+
+```bash
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo '')
+if [ -n "$LAST_TAG" ]; then
+  git log "$LAST_TAG"..HEAD --oneline
+else
+  git log --oneline | head -50
+fi
+```
+
+| Bump | Triggered by changes that include any of: |
+| --- | --- |
+| **MAJOR** | Removed routes, removed/renamed API fields, schema migrations requiring user action, env var renames, breaking redirects |
+| **MINOR** | New routes, new optional fields, new pages, new admin tabs, new opt-in features |
+| **PATCH** | Bug fixes, copy edits, dependency bumps without behavior change, perf, security patches |
+
+If the diff has multiple categories, pick the highest. **A single MAJOR change makes the whole release MAJOR**, regardless of how many PATCH-class fixes ride along.
+
+For pre-MVP (`v0.x.y`), the rules relax slightly: any bump increments MINOR by default; reserve MAJOR for the eventual `v1.0.0` graduation when you commit to API stability.
+
+### 2. Bump `package.json`
+
+```bash
+# npm version handles the bump + amends package-lock.json + tags + commits
+npm version <patch|minor|major>          # also creates the git tag automatically
+# or, if you want to set explicitly:
+npm version 0.3.0 --no-git-tag-version    # no auto-tag; you'll tag after CHANGELOG
+```
+
+For `0.x.y` projects, use `--allow-same-version` if you're aligning to a tag that already exists.
+
+### 3. Write the CHANGELOG entry
+
+Open `CHANGELOG.md` (create it if absent — Keep-a-Changelog format). The agent wrote entries to the `## [Unreleased]` section as work happened during 03–13; now promote them to a versioned heading and start a fresh `## [Unreleased]`.
+
+```markdown
+# Changelog
+
+All notable changes to this project will be documented here.
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [0.3.0] — 2026-05-04
+
+### Added
+- Notifications admin tab + bell icon in the header.
+- Feedback collection: hamburger item + 3 contextual prompts + admin tab.
+
+### Changed
+- Mode-customization: "giving up" items in the configurator are clickable
+  to promote skills back into the plan.
+
+### Fixed
+- Sticky footer was floating mid-page on short routes; now hugs viewport bottom.
+```
+
+If `git log` shows commits that don't fit a CHANGELOG bullet (e.g., refactoring with no user-visible effect), they can be omitted. The CHANGELOG is for the user's reader — your future-self, your customers — not a comprehensive git mirror.
+
+### 4. Create the git tag
+
+```bash
+VERSION=$(node -p "require('./package.json').version")
+git add CHANGELOG.md package.json package-lock.json
+git commit -m "release: v$VERSION"
+git tag -a "v$VERSION" -m "v$VERSION"
+git push --follow-tags origin main         # or whichever branch the user deploys from
+```
+
+If `npm version` already created the tag in step 2, just `git push --follow-tags` — don't tag twice.
+
+### 5. Record in `STATE.yaml`
+
+Append the new version + date to `decisions.released_versions` (append-only history) so the next deploy knows what the previous version was without parsing git tags:
+
+```yaml
+decisions:
+  released_versions:
+    - { version: "0.2.0", date: "2026-04-12", url: "https://example.com" }
+    - { version: "0.3.0", date: "2026-05-04", url: "https://example.com" }
+```
+
 ## Smoke test (all paths)
 
 - `curl -I <prod-url>` returns 200 and the security headers from sub-skill 09.
@@ -150,6 +240,9 @@ Capture the production URL.
 - **Silently migrating without asking.** If you're switching hosts, the user needs to know &mdash; DNS, analytics, URLs, and webhooks all change.
 - **Hand-editing env vars in the Vercel dashboard UI when the CLI can do it scriptably.** Scripted = reproducible.
 - **Storing `VERCEL_TOKEN` (or any platform token) in production env.** It belongs on the developer's machine only.
+- **Deploying without a version bump.** Every shipped artifact gets a semver tag so you can correlate deployed code to a specific commit and CHANGELOG entry. "Untagged HEAD" is the version of nothing.
+- **Editing a previously-shipped CHANGELOG entry to add forgotten changes.** If you missed something, write a follow-up PATCH bump. CHANGELOG history is append-only.
+- **Reusing a tag** (force-pushing `v0.3.0` to point at a different commit). Once a tag is pushed, treat it as immutable. If `v0.3.0` shipped broken, `v0.3.1` fixes it.
 
 ## Exit criteria
 
@@ -157,5 +250,6 @@ Capture the production URL.
 - Whichever platform is in use (existing or Vercel), the agent can redeploy with a single command using credentials in `.env.local`.
 - A `# Deploy` section in `PROJECT.md` records: platform, production URL, GitHub repo URL, project/app name, and the redeploy command.
 - The user has the production URL in their hands.
+- `package.json` `version` is bumped for this release (see SKILL.md versioning rule); a matching `vX.Y.Z` git tag exists; `CHANGELOG.md` has a new section for this version with at least the user-visible bullets; the version + date is appended to `STATE.yaml decisions.released_versions`.
 
 Move on to `15-domain.md`.
