@@ -1,4 +1,4 @@
-# 10 · Security
+# 11 · Security
 
 Goal: don't ship the obvious mistakes. This is not a pen-test — it is a hygiene checklist.
 
@@ -112,4 +112,4 @@ If you found anything you couldn't fix in this pass, list it under `# Open quest
 - Route inventory complete; orphan routes deleted (with user confirmation); every authed route actually checks auth server-side.
 - A `# Security` line in `PROJECT.md` records the audit date and any deferred items.
 
-Move on to `11-performance.md`.
+Move on to `12-performance.md`.

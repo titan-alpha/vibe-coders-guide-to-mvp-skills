@@ -34,9 +34,9 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=a, Q2=a, Q3=a. *("Show me, this weekend, just to prove the idea.")*
 
-**Skills (5)**: `01-discover`, `02-design`, `05-ai-integration` (only if the product needs AI), `13-deploy`, `16-ship-checklist`.
+**Skills (5)**: `01-discover`, `02-design`, `05-ai-integration` (only if the product needs AI), `14-deploy`, `17-ship-checklist`.
 
-**Skips**: compliance, auth, admin, monetization, accessibility, security, performance, data-optimization, domain, e2e-testing, deliverables.
+**Skips**: compliance, auth, admin, analytics, monetization, accessibility, security, performance, data-optimization, domain, e2e-testing, deliverables.
 
 **You are giving up**:
 - No accounts (anyone can use it; nothing is saved per user).
@@ -52,9 +52,9 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: project is a blog, docs site, marketing landing, portfolio, or content-led product. Audience is "anyone with a browser." Q3 typically (b) retention or revenue via ads.
 
-**Skills (8–10)**: `01-discover`, `02-design`, `09-accessibility`, `11-performance`, `13-deploy`, `15-e2e-testing`, `16-ship-checklist`, plus optionally `08-monetization` (AdSense path), `14-domain`.
+**Skills (8–10)**: `01-discover`, `02-design`, `10-accessibility`, `12-performance`, `14-deploy`, `16-e2e-testing`, `17-ship-checklist`, plus optionally `09-monetization` (AdSense path), `15-domain`. Analytics typically uses Plausible directly (no admin tab), so `08-analytics` is skipped.
 
-**Skips**: compliance (no signup → minimal surface), auth, admin, AI (optional), chatbot, data-optimization, deliverables.
+**Skips**: compliance (no signup → minimal surface), auth, admin, analytics (use Plausible directly), AI (optional), chatbot, data-optimization, deliverables.
 
 **You are giving up**:
 - No accounts. The content-site mode assumes nothing is gated.
@@ -68,9 +68,9 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=b or c, Q2=b or c, Q3=a or b. *("I want a small, real group using this for feedback.")*
 
-**Skills (12)**: `01-discover`, `02-design`, `03-compliance`, `04-auth`, `07-admin-dashboard`, `09-accessibility`, `10-security`, `11-performance`, `13-deploy`, `14-domain`, `15-e2e-testing`, `16-ship-checklist`. Add `05-ai-integration` and/or `06-chatbot` if the product needs them.
+**Skills (12)**: `01-discover`, `02-design`, `03-compliance`, `04-auth`, `07-admin-dashboard`, `10-accessibility`, `11-security`, `12-performance`, `14-deploy`, `15-domain`, `16-e2e-testing`, `17-ship-checklist`. Add `05-ai-integration` and/or `06-chatbot` if the product needs them. Add `08-analytics` if the user wants to track engagement/funnels (often deferred until there's a real cohort).
 
-**Skips by default**: monetization (free beta), data-optimization (premature for first 50 users), deliverables (not pitching yet).
+**Skips by default**: analytics (usually deferred for first 50 users — easier to add once you have signal), monetization (free beta), data-optimization (premature for first 50 users), deliverables (not pitching yet).
 
 **You are giving up**:
 - No revenue from this beta. Money comes after you've validated the product.
@@ -84,7 +84,7 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=c or d, Q2=c, Q3=any. *("This is real and I want to do it right.")*
 
-**Skills (all 17)**: every sub-skill, in numbered order.
+**Skills (all 18)**: every sub-skill, in numbered order. Analytics (`08-analytics`) is included with both investor KPIs and product analytics enabled.
 
 **Skips**: nothing.
 
@@ -96,7 +96,7 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=d, Q3=c or d. *("I'm raising capital or shipping with a deck.")*
 
-**Skills (all 17, with `17-deliverables` not optional)**: same as `full-mvp`, but `17-deliverables` is mandatory and gets extra time. Pitch deck, investor one-pager, marketing one-pager, financial model, ad creative, launch announcement — all generated into `deliverables/`.
+**Skills (all 18, with `08-analytics` and `18-deliverables` not optional)**: same as `full-mvp`, but `08-analytics` is required (investor KPIs are non-negotiable) and `18-deliverables` is required (pitch deck, investor one-pager, marketing one-pager, financial model, ad creative, launch announcement — all generated into `deliverables/`).
 
 **Skips**: nothing.
 

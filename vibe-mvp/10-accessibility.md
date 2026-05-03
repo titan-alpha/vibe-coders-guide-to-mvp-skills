@@ -1,4 +1,4 @@
-# 09 · Accessibility
+# 10 · Accessibility
 
 Goal: pass WCAG 2.2 AA on the MVP slice. This is not optional. Roughly 1 in 5 people has a disability that affects how they use software.
 
@@ -127,4 +127,4 @@ After the fixes, tell the user:
 - Color-blindness simulation reviewed for landing + any chart/status view.
 - A `# Accessibility` line in `PROJECT.md` records the audit date and the routes scanned.
 
-Move on to `10-security.md`.
+Move on to `11-security.md`.

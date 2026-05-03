@@ -1,4 +1,4 @@
-# 16 · Ship Checklist
+# 17 · Ship Checklist
 
 Goal: final go/no-go before the user shares the URL with another human.
 
@@ -50,4 +50,4 @@ Tell the user, in this order:
 - All checklist items are ticked or explicitly marked as not applicable.
 - The user has the URL, the repo, and the next-steps list in their hands.
 
-Move on to `17-deliverables.md`.
+Move on to `18-deliverables.md`.

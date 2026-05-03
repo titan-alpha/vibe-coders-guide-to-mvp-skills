@@ -1,4 +1,4 @@
-# 08 · Monetization
+# 09 · Monetization
 
 Goal: pick the right way for the product to make money &mdash; or skip monetization entirely if the access model is free beta and the user wants to prioritize reach. Three patterns cover ~95% of MVPs: **free beta** (no payment yet), **ad revenue** (AdSense), and **direct payment** (Stripe). The agent helps the user pick, walks them through getting credentials, and wires it up.
 
@@ -344,4 +344,4 @@ The admin dashboard's Users tab (sub-skill 07) should display each user's subscr
 - Access granted only after webhook fires &mdash; not on success-page redirect.
 - A `# Monetization` line in `PROJECT.md` records the chosen plan structure (one-time vs subscription, price IDs).
 
-Move on to `09-accessibility.md`.
+Move on to `10-accessibility.md`.

@@ -119,41 +119,181 @@ export async function gatedAiCall<T>(args: { userId: string } & Parameters<typeo
 
 Replace `aiCall` callers with `gatedAiCall` everywhere a user triggered the call. (Background jobs and admin-triggered calls should use raw `aiCall`.) Surface `UsageExhausted` to the UI as a friendly "you've used your monthly quota — contact us" message.
 
-## AUTONOMOUS — lock the route with a password
+## AUTONOMOUS — lock the route with a password (placeholder + forced change on first login)
 
 The admin dashboard is for the **founder only**, not regular users. Don't tie it to the user-account system — gate it with a dedicated password the founder picks. This works regardless of which auth mode the rest of the app uses.
 
-Add to `.env.local` and to Vercel env (sub-skill 13):
-```
-ADMIN_PASSWORD=<long random string>     # generate with: openssl rand -base64 32
-INITIAL_USAGE_GRANT=100                 # baked into every new user's usageGranted at signup
+The flow has three states:
+
+1. **Setup** — agent generates a placeholder password, shows it to the user once, and stores it in `.env.local` as `ADMIN_PASSWORD_BOOTSTRAP`.
+2. **First login** — user signs in with the placeholder. Middleware accepts it but redirects to `/admin/change-password`. User cannot reach any admin page until they set a real password.
+3. **Steady state** — middleware checks the bcrypt hash stored in the DB. The bootstrap env var is no longer consulted (and the agent tells the user they can delete it).
+
+### Step 1 — generate the placeholder + show it to the user
+
+Use a memorable-but-random pattern so it's easy to type once:
+
+```bash
+node -e "console.log('vibe-admin-' + crypto.randomBytes(4).toString('hex'))"
+# example output: vibe-admin-9f3a2c8b
 ```
 
-Use Next.js middleware with HTTP Basic Auth. One file, no UI, browser handles the credential prompt. Strong-password-only; nothing to phish.
+Append to `.env.local`:
+```
+ADMIN_PASSWORD_BOOTSTRAP=vibe-admin-9f3a2c8b   # placeholder; remove after first login
+INITIAL_USAGE_GRANT=100                          # baked into every new user's usageGranted at signup
+```
+
+Tell the user, in chat, in plain English:
+
+> *"Your one-time admin password is **`vibe-admin-9f3a2c8b`**.*
+>
+> *Open `/admin` (or `https://<your-domain>/admin` once deployed). Sign in with username `admin` and that password. The first thing you'll see is a 'Set your admin password' form — pick something you'll remember, at least 12 characters. After that, the placeholder stops working and you can delete `ADMIN_PASSWORD_BOOTSTRAP` from `.env.local` (and from Vercel env).*"
+
+### Step 2 — schema for the persistent admin password
+
+Add a single-row table (or a one-row settings table if you prefer one bag for all admin settings):
+
+```ts
+// lib/db/schema.ts (extend)
+export const adminSettings = pgTable('admin_settings', {
+  id: integer('id').primaryKey().default(1),         // single-row pattern
+  passwordHash: text('password_hash'),               // null until first change
+  passwordSetAt: timestamp('password_set_at'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+```
+
+Seed the row at migration time:
+```sql
+insert into admin_settings (id) values (1) on conflict do nothing;
+```
+
+### Step 3 — middleware checks hash first, then bootstrap
 
 ```ts
 // middleware.ts
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   if (!req.nextUrl.pathname.startsWith('/admin')) return NextResponse.next();
-  const auth = req.headers.get('authorization');
-  if (auth?.startsWith('Basic ')) {
-    const decoded = Buffer.from(auth.slice(6), 'base64').toString();
-    const [user, pass] = decoded.split(':');
-    if (user === 'admin' && pass === process.env.ADMIN_PASSWORD) return NextResponse.next();
+
+  // /admin/change-password is the one admin route reachable with bootstrap creds.
+  // Allow it through with bootstrap auth so the user can land here and set the real password.
+  const isChangePage = req.nextUrl.pathname === '/admin/change-password';
+
+  const authHeader = req.headers.get('authorization');
+  if (!authHeader?.startsWith('Basic ')) {
+    return new NextResponse('Authentication required', {
+      status: 401,
+      headers: { 'WWW-Authenticate': 'Basic realm="Admin"' },
+    });
   }
-  return new NextResponse('Authentication required', {
-    status: 401,
-    headers: { 'WWW-Authenticate': 'Basic realm="Admin"' },
-  });
+  const [user, pass] = Buffer.from(authHeader.slice(6), 'base64').toString().split(':');
+  if (user !== 'admin' || !pass) return new NextResponse('Auth failed', { status: 401 });
+
+  // Edge runtime can't import bcryptjs cleanly; do the check via a lightweight API route.
+  const result = await fetch(`${req.nextUrl.origin}/api/admin/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ password: pass }),
+  }).then(r => r.json() as Promise<{ ok: boolean; mustChange: boolean }>);
+
+  if (!result.ok) {
+    return new NextResponse('Auth failed', {
+      status: 401,
+      headers: { 'WWW-Authenticate': 'Basic realm="Admin"' },
+    });
+  }
+
+  if (result.mustChange && !isChangePage) {
+    return NextResponse.redirect(new URL('/admin/change-password', req.url));
+  }
+
+  return NextResponse.next();
 }
 
 export const config = { matcher: '/admin/:path*' };
 ```
 
-For better UX (custom login form instead of the browser prompt), build `/admin/login` that POSTs the password to a Route Handler, which sets a signed `admin_session` cookie on success. Middleware then checks the cookie. This is a v1.5 upgrade — basic auth is enough to ship.
+```ts
+// app/api/admin/verify/route.ts
+import bcrypt from 'bcryptjs';
+import { db } from '@/lib/db';
+import { adminSettings } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+
+export async function POST(req: Request) {
+  const { password } = (await req.json()) as { password: string };
+  const [row] = await db.select().from(adminSettings).where(eq(adminSettings.id, 1));
+
+  // Persistent hash exists → use it. Bootstrap env var is no longer consulted.
+  if (row?.passwordHash) {
+    const ok = await bcrypt.compare(password, row.passwordHash);
+    return Response.json({ ok, mustChange: false });
+  }
+
+  // No persistent hash yet → accept bootstrap and force a change on first page hit.
+  const bootstrap = process.env.ADMIN_PASSWORD_BOOTSTRAP;
+  if (bootstrap && password === bootstrap) {
+    return Response.json({ ok: true, mustChange: true });
+  }
+
+  return Response.json({ ok: false, mustChange: false });
+}
+```
+
+### Step 4 — the change-password page
+
+```tsx
+// app/admin/change-password/page.tsx
+import bcrypt from 'bcryptjs';
+import { db } from '@/lib/db';
+import { adminSettings } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { redirect } from 'next/navigation';
+
+export default function ChangePasswordPage() {
+  return (
+    <main className="max-w-md mx-auto p-6">
+      <h1 className="text-2xl font-semibold">Set your admin password</h1>
+      <p className="text-sm opacity-75 mt-2">
+        You're using the one-time placeholder password. Pick a real one (≥ 12 characters).
+        After this, the placeholder stops working — you can remove <code>ADMIN_PASSWORD_BOOTSTRAP</code> from your env.
+      </p>
+      <form
+        className="mt-6 space-y-3"
+        action={async (formData: FormData) => {
+          'use server';
+          const next = String(formData.get('newPassword'));
+          const confirm = String(formData.get('confirmPassword'));
+          if (next.length < 12) throw new Error('Password must be at least 12 characters.');
+          if (next !== confirm) throw new Error('Passwords do not match.');
+          const passwordHash = await bcrypt.hash(next, 12);
+          await db.update(adminSettings)
+            .set({ passwordHash, passwordSetAt: new Date(), updatedAt: new Date() })
+            .where(eq(adminSettings.id, 1));
+          redirect('/admin');
+        }}
+      >
+        <input name="newPassword"     type="password" required minLength={12} className="input input-bordered w-full" placeholder="New password (min 12)" autoComplete="new-password" />
+        <input name="confirmPassword" type="password" required minLength={12} className="input input-bordered w-full" placeholder="Confirm new password" autoComplete="new-password" />
+        <button className="btn btn-primary w-full">Set password</button>
+      </form>
+    </main>
+  );
+}
+```
+
+After the user submits, the persistent hash is set, the next request validates against it, `mustChange` becomes false, and `/admin` renders normally. The browser's stored Basic Auth credentials no longer match the bootstrap, so the user will be re-prompted for their new password — that's the one they typed in the form.
+
+### Step 5 — tell the user to delete the bootstrap env var
+
+Once the change-password flow has succeeded, surface a one-line note in the chat:
+
+> *"Done. You can now remove `ADMIN_PASSWORD_BOOTSTRAP` from `.env.local` and Vercel env — it's no longer used. Your real password lives only in the database (as a bcrypt hash)."*
+
+For better UX (custom login form instead of the browser prompt), build `/admin/login` that POSTs the password to a Route Handler, which sets a signed `admin_session` cookie on success. Middleware then checks the cookie. This is a v1.5 upgrade — basic auth + the change-password flow are enough to ship.
 
 ## AUTONOMOUS — build the dashboard with five tabs
 
@@ -637,7 +777,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 
 ## Exit criteria
 
-- `ADMIN_PASSWORD` and `INITIAL_USAGE_GRANT` are in `.env.local` (and Vercel env after deploy), gitignored.
+- `ADMIN_PASSWORD_BOOTSTRAP` was generated, shown once, and used for the first login; the user has since changed it via `/admin/change-password` and the persistent bcrypt hash is stored in `admin_settings.password_hash`. `INITIAL_USAGE_GRANT` is in `.env.local` (and Vercel env after deploy), gitignored.
 - Visiting `/admin` without credentials returns 401.
 - Visiting `/admin` with the correct password renders the five-tab dashboard (four tabs if notifications were skipped).
 - **Overview** renders 4–6 KPIs with real data.
@@ -650,4 +790,4 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 - `STATE.md # Decisions` records whether notifications are enabled (so sub-skill 02 knows whether to render the bell).
 - Any new instrumentation is documented under `# Decisions` in `PROJECT.md`.
 
-Move on to `08-monetization.md`.
+Move on to `08-analytics.md` (or skip to `09-monetization.md` if analytics aren't in scope for this mode).

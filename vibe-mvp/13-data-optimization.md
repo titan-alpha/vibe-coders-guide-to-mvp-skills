@@ -1,4 +1,4 @@
-# 12 · Data Optimization
+# 13 · Data Optimization
 
 Goal: ensure every piece of data flowing between the frontend and backend is doing the least work necessary. For projects with persistent data, this is the difference between a snappy MVP and one that feels broken under any load.
 
@@ -88,4 +88,4 @@ Apply what's agreed. Note rejected items in `# Open questions` for post-MVP revi
 - Real-time-feeling features use the right transport (polling/SSE/WebSockets) for their actual latency need.
 - A `# Data` section in `PROJECT.md` records the audit findings, the changes made, and any items deferred to post-MVP.
 
-Move on to `13-deploy.md`.
+Move on to `14-deploy.md`.

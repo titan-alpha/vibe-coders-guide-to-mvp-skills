@@ -123,19 +123,20 @@ After the user confirms, mirror the assessment into `STATE.md`'s skill plan (`[x
 4. `04-auth.md` — Signup, login, sign-out, email verification, password reset; waitlist + invite modes; signup form with full field set + consent checkboxes that link to the docs from sub-skill 03.
 5. `05-ai-integration.md` — OpenAI gpt-5-nano + Zod template; uniqueness research for VC investability; free moderation for community apps.
 6. `06-chatbot.md` — *Optional.* Persistent AI navigation assistant in the bottom-right.
-7. `07-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with **Overview / Users / Waitlist / Usage tabs**: KPIs, add-user, approve from waitlist, grant usage (per user or global), deactivate.
-8. `08-monetization.md` — *Optional.* **Free beta vs paid beta** decision; AdSense for content sites; Stripe Checkout for paid beta with product creation via the Stripe API.
-9. `09-accessibility.md` — WCAG 2.2 AA pass. Non-negotiable.
-10. `10-security.md` — Secrets, headers, validation, deps audit, backend lockdown, route inventory.
-11. `11-performance.md` — Lighthouse ≥ 90, sane image budget.
-12. `12-data-optimization.md` — *Optional.* Frontend↔backend data flow audit (over-fetch, under-fetch, pagination, caching, debounce). Skip for static sites.
-13. `13-deploy.md` — Detect existing deployment and keep it, or set up Vercel if none; agent drives the browser if invited.
-14. `14-domain.md` — *Optional.* Buy a custom domain (GoDaddy) and point it at Vercel.
-15. `15-e2e-testing.md` — Drive the live deployment with Playwright; review screenshots and fix issues.
-16. `16-ship-checklist.md` — Final go/no-go before sharing the URL.
-17. `17-deliverables.md` — *Optional.* Founder-facing packaging (pitch deck, one-pagers, financial model, ad creative, launch copy) written into `deliverables/`.
+7. `07-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with **Overview / Users / Waitlist / Usage / Notifications tabs**: KPIs, add-user, approve from waitlist, grant usage (per user or global), deactivate, send notifications.
+8. `08-analytics.md` — *Optional.* Investor KPIs (DAU/MAU/retention/MRR/North Star) and/or product analytics (funnels, feature usage). Self-hosted in Postgres, or PostHog/Plausible. Adds an Analytics tab to the admin dashboard.
+9. `09-monetization.md` — *Optional.* **Free beta vs paid beta** decision; AdSense for content sites; Stripe Checkout for paid beta with product creation via the Stripe API.
+10. `10-accessibility.md` — WCAG 2.2 AA pass. Non-negotiable.
+11. `11-security.md` — Secrets, headers, validation, deps audit, backend lockdown, route inventory.
+12. `12-performance.md` — Lighthouse ≥ 90, sane image budget.
+13. `13-data-optimization.md` — *Optional.* Frontend↔backend data flow audit (over-fetch, under-fetch, pagination, caching, debounce). Skip for static sites.
+14. `14-deploy.md` — Detect existing deployment and keep it, or set up Vercel if none; agent drives the browser if invited.
+15. `15-domain.md` — *Optional.* Buy a custom domain (GoDaddy) and point it at Vercel.
+16. `16-e2e-testing.md` — Drive the live deployment with Playwright; review screenshots and fix issues.
+17. `17-ship-checklist.md` — Final go/no-go before sharing the URL.
+18. `18-deliverables.md` — *Optional.* Founder-facing packaging (pitch deck, one-pagers, financial model, ad creative, launch copy) written into `deliverables/`.
 
-The skills marked *Optional* (06, 07, 08, 12, 14, 17) are gated by user dialogue. If the product genuinely doesn't need a chatbot, a dashboard, monetization, data optimization, a custom domain, or packaging, exit those skills quickly and move on. Don't bolt features on for novelty.
+The skills marked *Optional* (06, 07, 08, 09, 13, 15, 18) are gated by user dialogue. If the product genuinely doesn't need a chatbot, a dashboard, analytics, monetization, data optimization, a custom domain, or packaging, exit those skills quickly and move on. Don't bolt features on for novelty.
 
 **Order is not arbitrary.** Three dependencies anchor it:
 - **Compliance (03) before Auth (04)** — the signup form's TOS / Privacy checkbox needs those documents to exist and to be linked, and the consent record stores the document version accepted.

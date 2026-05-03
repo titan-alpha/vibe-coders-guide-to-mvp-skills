@@ -1,4 +1,4 @@
-# 13 · Deploy
+# 14 · Deploy
 
 Goal: get the MVP live on the internet, under an account the user controls, with the agent doing as much of the work as possible. **Check for an existing deployment first &mdash; don't force the user to move to Vercel if they're already somewhere that works.**
 
@@ -158,4 +158,4 @@ Capture the production URL.
 - A `# Deploy` section in `PROJECT.md` records: platform, production URL, GitHub repo URL, project/app name, and the redeploy command.
 - The user has the production URL in their hands.
 
-Move on to `14-domain.md`.
+Move on to `15-domain.md`.

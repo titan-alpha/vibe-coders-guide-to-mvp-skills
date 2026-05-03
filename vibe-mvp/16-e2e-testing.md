@@ -1,4 +1,4 @@
-# 15 · E2E Testing
+# 16 · E2E Testing
 
 Goal: drive the MVP end-to-end with a real browser, page by page, and ship nothing without three passes:
 
@@ -241,4 +241,4 @@ test('dashboard empty state', async ({ page }, testInfo) => {
 - **Pass C (visual audit):** rubric filled in for every route × breakpoint, every cell ✅, screenshots saved as evidence under `test-results/`.
 - A `# E2E` section in `PROJECT.md` lists the tested flows, the routes crawled, the breakpoints, and the date of the last clean run.
 
-Move on to `16-ship-checklist.md`.
+Move on to `17-ship-checklist.md`.
