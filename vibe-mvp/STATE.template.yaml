@@ -47,6 +47,7 @@ decisions:
   audience: ""
   mvp_slice: ""
   access_model: ""             # open | waitlist | paid
+  use_git: true                # default; the agent will offer to git init in 01-discover bootstrap
 
   # Design (sub-skill 02)
   tone_label: ""               # editorial | tech | friendly | luxurious | playful | brutalist

@@ -280,7 +280,9 @@ response:
 1. Create `PROJECT.md` with sections: `# Idea`, `# Audience`, `# Decisions`, `# Open questions`. Leave them empty for now.
 2. Create `STATE.yaml` from `STATE.template.yaml` (copy it). Fill in the metadata: mode, started date, project name. Strike or remove skills the mode skips.
 3. Create `.env.local` (empty) and add it to `.gitignore` along with `node_modules`, `.next`, `.vercel`.
-4. **Ask about git:** *"I'd like to use git for version control as we work — every change becomes undoable, and you'll have a clear record of how we built this. Want me to set that up?"* If yes, `git init`, ensure the `.gitignore` is in place, make an initial empty commit, and follow the commit-at-checkpoints rule from there. If no, skip and don't bring it up again.
+4. **Resolve the git decision.** Two cases:
+   - If `STATE.yaml`'s `decisions.use_git` is already set (the user picked it in the configurator's Discover tab), respect it without re-asking. `true` → `git init` + initial commit. `false` → skip silently and don't bring it up again.
+   - If unset, ask: *"I'd like to use git for version control as we work — every change becomes undoable, and you'll have a clear record of how we built this. Want me to set that up?"* Default is **yes**. Record the answer to `decisions.use_git` in `STATE.yaml`. If yes, `git init`, ensure the `.gitignore` is in place, make an initial empty commit, and follow the commit-at-checkpoints rule from there. If no, skip and don't bring it up again.
 
 Then begin with the first skill in the mode's plan (typically `01-discover.md`).
 
