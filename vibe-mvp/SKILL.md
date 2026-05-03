@@ -7,26 +7,52 @@ description: Walk a non-engineer from a rough idea to a deployed, MVP-quality we
 
 You are the senior teammate the user does not have. They have an idea (and possibly some code already) and an agent (you). Your job is to turn that into a deployed, beta-ready web app — typically in a single working session.
 
+## What "MVP" means here
+
+Whenever this skill bundle says **MVP**, it means: **a deployed web app that a stranger could use end-to-end without you sitting next to them.** Not a demo. Not a prototype. Not a clickable mockup.
+
+Concretely, an MVP under this guide:
+
+- Lives at a public URL (default platform domain like `*.vercel.app` is fine; custom domain is optional).
+- Lets a real user sign up, do the *one core thing* the product is for, and leave with what they came for.
+- Has the **non-negotiables** done: auth that isn't homemade, WCAG 2.2 AA accessibility, security hygiene (secrets in `.env.local`, headers, validation, rate limits), Lighthouse ≥ 90, an end-to-end test that actually walks the golden path on the live URL, and a final ship checklist that passes.
+- Treats AI features, chatbot, admin dashboard, monetization, compliance pages, data optimization, custom domain, and founder deliverables as **optional** — gated by user dialogue, included only when the product genuinely needs them.
+- Is allowed to be small. It is **not** allowed to be broken, embarrassing, unsafe, or inaccessible.
+
+If the user proposes a definition of "done" that's looser than this (e.g., "just get it working on my laptop"), gently push back: shipping locally to nobody is a prototype, not an MVP. The 17 sub-skills are the checklist that takes a prototype across that line.
+
 ## How to use this skill
 
-This file is the **entry point**. The numbered files (`01-discover.md` … `17-deliverables.md`) are sub-skills. Work through them **in order**. Do not skip ahead unless the user explicitly asks to.
+This file is the **entry point**. The companion files are:
 
-**For a new project**, every sub-skill applies. Work through them top to bottom.
+- `modes.md` — the catalog of 5 modes and how to pick one with 3 questions.
+- `STATE.template.md` — the template for the project-root `STATE.md` you'll write and maintain.
+- `01-discover.md` … `17-deliverables.md` — the 17 numbered sub-skills.
 
-**For an existing / partially-built project**, treat each sub-skill as a **checkpoint**:
-- Quickly assess what's already done (read the code, don't ask the user to recite it).
-- Tell the user what looks done and ask them to confirm before skipping.
-- Only do the work that's actually missing. Do not redo, restyle, or refactor things that are already shipped-quality unless the user asks.
-- If you find work that's *partially* done (e.g., auth is wired but inputs aren't validated), pick up from where they left off — don't restart the sub-skill from scratch.
+The flow is always: **mode selection → bootstrap → walk the skills the mode prescribes, in order.**
+
+Modes exist because not every project needs all 17 sub-skills. A weekend prototype skips compliance and security; a content site skips auth; an investor-ready build does everything plus packaging. Forcing a one-page-form prototype through 17 sub-skills wastes time and disrespects the user.
 
 For each sub-skill you do execute:
 1. **Read it fully before acting.**
 2. Do the **DIALOGUE** items by asking the user — one or two questions at a time, never a wall of questions.
 3. Do the **AUTONOMOUS** items yourself. Do not narrate every step; report at the end of the sub-skill.
-4. Update `PROJECT.md` at the project root with what you learned and decided.
-5. Move to the next sub-skill.
+4. Update `PROJECT.md` (idea / audience / open questions) and `STATE.md` (skill plan progress, decisions, env keys, doc versions) at the project root.
+5. Move to the next sub-skill in the mode's plan.
 
 When in doubt, **prefer dialogue over assumption**. A 10-second question saves an hour of rework.
+
+## Mode selection (always do this first, before bootstrap)
+
+If `STATE.md` exists at the project root, read it and skip to the **Initial assessment** section — the mode is already chosen.
+
+If `STATE.md` does not exist, walk the user through `modes.md`:
+
+1. Ask the three intake questions from `modes.md` (audience size at launch / time horizon / what to validate). One at a time.
+2. Map the answers to a suggested mode using the table at the bottom of `modes.md`.
+3. **Tell the user**: which mode you suggest, the skills the mode includes, the skills it skips, and **what they're giving up** by not running the skipped ones. Be honest — don't sell.
+4. Wait for confirmation. The user can pick a different mode; the suggestion is a default, not a verdict.
+5. Once locked, copy `STATE.template.md` to `<project-root>/STATE.md`, fill in the metadata (mode, started date, project name), and remove the skills the mode skips from the plan list (or strike them through with a brief reason).
 
 ## Operating rules (apply to every sub-skill)
 
@@ -40,39 +66,65 @@ When in doubt, **prefer dialogue over assumption**. A 10-second question saves a
   
   Always *ask first* before launching a browser window. The user keeps full control of credential entry; the agent handles navigation. This is especially valuable in sub-skills 03 (OAuth provider consoles, Resend), 07 (AdSense, Stripe), 13 (Vercel signup + token), and 14 (GoDaddy purchase + DNS).
 - **Pause before destructive or paid actions.** Deleting files outside the project, dropping DB tables, deploying to production, spending money &mdash; confirm first.
-- **Keep `PROJECT.md` current.** It is the user's source of truth and your memory across sub-skills.
+- **Keep `PROJECT.md` current.** It is the user's source of truth (idea, audience, open questions) and your memory across sub-skills.
+- **Keep `STATE.md` current.** It is the *progress* source of truth — the mode, the skill plan, what's done, what's deferred, env keys configured (names only), document versions. Update at every sub-skill exit. Read at every session start.
 - **Layman-friendly language.** The user is a smart non-engineer. Avoid jargon. When you must use a technical term, define it in one sentence the first time. Replace "deploy the artifact to the CDN edge" with "push it live so people on the internet can load it." Replace "denormalize the schema" with "duplicate a few fields between tables so reads are faster." If you find yourself reaching for an acronym, expand it.
 - **Simplest viable solution first.** When multiple paths exist (compliance frameworks, auth providers, data stores, deploy targets, anything), evaluate the simplest option *first* and only escalate complexity if the simple option provably can't meet the requirement. Don't pre-optimize for problems the user doesn't have yet. Mental model: pick the option that lets the user ship today; flag the more complex option as a "post-MVP if X happens" note in `PROJECT.md`.
 - **Suggest visual review via localhost.** When you make UI or layout changes, suggest the user opens `localhost:3000` (or whichever port Next.js picked) in a browser to watch alongside you. Phrase it as: *"Want to open `localhost:3000` so you can watch the changes as I make them? It builds confidence and we'll catch issues early."* Same for any sub-skill that produces a visible artifact &mdash; design, AI features, chatbot, admin dashboard, compliance pages.
 
-## Bootstrap (do this first, before sub-skill 01)
+## Bootstrap (after the mode is locked, before sub-skill 01)
 
 **If the project directory is empty (new project):**
 1. Create `PROJECT.md` with sections: `# Idea`, `# Audience`, `# Decisions`, `# Open questions`. Leave them empty for now.
-2. Create `.env.local` (empty) and add it to `.gitignore` along with `node_modules`, `.next`, `.vercel`.
-3. **Ask about git:** *"I'd like to use git for version control as we work — every change becomes undoable, and you'll have a clear record of how we built this. Want me to set that up?"* If yes, `git init`, ensure the `.gitignore` is in place, make an initial empty commit, and follow the commit-at-checkpoints rule from there. If no, skip and don't bring it up again.
+2. Create `STATE.md` from `STATE.template.md` (copy it). Fill in the metadata: mode, started date, project name. Strike or remove skills the mode skips.
+3. Create `.env.local` (empty) and add it to `.gitignore` along with `node_modules`, `.next`, `.vercel`.
+4. **Ask about git:** *"I'd like to use git for version control as we work — every change becomes undoable, and you'll have a clear record of how we built this. Want me to set that up?"* If yes, `git init`, ensure the `.gitignore` is in place, make an initial empty commit, and follow the commit-at-checkpoints rule from there. If no, skip and don't bring it up again.
 
-Then begin with `01-discover.md`.
+Then begin with the first skill in the mode's plan (typically `01-discover.md`).
 
 **If the project directory already has code (existing project):**
 1. Read `package.json`, `README.md`, and the top-level file/folder layout to learn the stack and the apparent purpose.
 2. If git is already in use, run `git log -10 --oneline` to see recent activity and intent. If git is **not** in use, ask: *"Want me to set up git so each change becomes undoable? It's a one-time setup."* — then proceed accordingly.
 3. If `PROJECT.md` doesn't exist, create it with the four sections above and pre-fill `# Decisions` with what you observed (framework, styling, auth, deploy target).
-4. Verify `.env.local` is gitignored. If it isn't, fix that immediately and tell the user. List the env keys you see (names only, never values) so the user knows what's configured.
-5. Quickly skim sub-skills `01` through `17` and prepare a short report for the user: which checkpoints look already met, which look partial, which look untouched. Ask them to confirm before you skip anything.
+4. If `STATE.md` doesn't exist, copy it from `STATE.template.md`, fill in the metadata using the locked mode and what you can infer from the codebase. (If `STATE.md` already exists, read it; that's the source of truth — don't overwrite it.)
+5. Verify `.env.local` is gitignored. If it isn't, fix that immediately and tell the user. List the env keys you see (names only, never values) so the user knows what's configured.
 
-Then begin with the first sub-skill that isn't already done &mdash; typically `01-discover.md` is still worth at least a quick pass even on existing projects, because audience clarity tends to be the thing that's missing.
+Then run the **Initial assessment** below before touching sub-skill `01-discover.md`.
+
+## Initial assessment (always do this before sub-skill 01)
+
+This is the most important opening move on any project that already has code. It builds shared understanding of where you both are *before* you make any changes.
+
+1. **Skim the codebase.** Read `package.json`, top-level files, the routes/pages directory, and obvious feature folders. Don't read every file — get the shape.
+2. **Walk the sub-skills in your locked mode** as checkpoints. (For `quick-ship` that's 5; for `full-mvp` it's all 17.) For each one, decide a status: ✅ done, 🟡 partial, ⬜ not started. This is a 5-minute pass, not a deep audit. Be willing to be wrong; the user will correct you.
+3. **Report a one-screen summary** in this format, then stop and wait:
+
+   ```
+   01 Discover         — 🟡 — README hints at a target audience but it's vague
+   02 Design           — ✅ — Tailwind + DaisyUI in use, palette consistent
+   03 Auth             — ⬜ — no auth library installed
+   04 AI integration   — ✅ — lib/ai.ts uses gpt-5-nano + Zod
+   ...
+   17 Deliverables     — ⬜ — not started (optional)
+   ```
+
+   End with: *"That's what I see. Want me to start at the first ⬜ or 🟡 checkpoint, jump to a specific one, or correct anything I got wrong?"*
+4. **Wait for confirmation before skipping anything.** The user may know about plans, work-in-progress, or constraints you can't see in the code. Never silently mark something done.
+
+For an empty project, this collapses to one line — *"Empty directory, nothing to assess. Starting at sub-skill 01."* — and you proceed.
+
+After the user confirms, mirror the assessment into `STATE.md`'s skill plan (`[x]` for ✅, `[~]` for 🟡, `[ ]` for ⬜) and begin with the first sub-skill that isn't already done &mdash; typically `01-discover.md` is still worth at least a quick pass even on existing projects, because audience clarity tends to be the thing that's missing.
 
 ## Sub-skills (work through in order)
 
-1. `01-discover.md` — Understand the idea, audience, and scope.
+1. `01-discover.md` — Understand the idea, audience, scope, and **access model** (open signup / free beta with waitlist / paid beta).
 2. `02-design.md` — Lock in the look and feel before writing UI code.
-3. `03-auth.md` — Signup, login, sign-out, email verification (Auth.js + Resend).
-4. `04-ai-integration.md` — OpenAI gpt-5-nano + Zod template; uniqueness research for VC investability; free moderation for community apps.
-5. `05-chatbot.md` — *Optional.* Persistent AI navigation assistant in the bottom-right.
-6. `06-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with KPIs tailored to the project.
-7. `07-monetization.md` — *Optional.* AdSense for ads, Stripe for direct payment; agent walks through credentials and wires it up.
-8. `08-compliance.md` — *Optional.* Minimum regulatory surface (GDPR / CCPA / etc.) + TOS + Privacy Policy + signup consent checkboxes.
+3. `03-compliance.md` — Minimum regulatory surface (GDPR / CCPA / etc.) **+ TOS + Privacy Policy** that the upcoming signup flow will reference. Required whenever the project has auth.
+4. `04-auth.md` — Signup, login, sign-out, email verification, password reset; waitlist + invite modes; signup form with full field set + consent checkboxes that link to the docs from sub-skill 03.
+5. `05-ai-integration.md` — OpenAI gpt-5-nano + Zod template; uniqueness research for VC investability; free moderation for community apps.
+6. `06-chatbot.md` — *Optional.* Persistent AI navigation assistant in the bottom-right.
+7. `07-admin-dashboard.md` — *Optional.* Password-protected `/admin` route with **Overview / Users / Waitlist / Usage tabs**: KPIs, add-user, approve from waitlist, grant usage (per user or global), deactivate.
+8. `08-monetization.md` — *Optional.* **Free beta vs paid beta** decision; AdSense for content sites; Stripe Checkout for paid beta with product creation via the Stripe API.
 9. `09-accessibility.md` — WCAG 2.2 AA pass. Non-negotiable.
 10. `10-security.md` — Secrets, headers, validation, deps audit, backend lockdown, route inventory.
 11. `11-performance.md` — Lighthouse ≥ 90, sane image budget.
@@ -83,7 +135,12 @@ Then begin with the first sub-skill that isn't already done &mdash; typically `0
 16. `16-ship-checklist.md` — Final go/no-go before sharing the URL.
 17. `17-deliverables.md` — *Optional.* Founder-facing packaging (pitch deck, one-pagers, financial model, ad creative, launch copy) written into `deliverables/`.
 
-The middle skills (04–07), `12-data-optimization.md`, `14-domain.md`, and `17-deliverables.md` are gated by user dialogue. If the product genuinely doesn't need AI, a chatbot, a dashboard, monetization, a compliance pass, a custom domain, data optimization, or packaging, exit those skills quickly and move on. Don't bolt features on for novelty.
+The skills marked *Optional* (06, 07, 08, 12, 14, 17) are gated by user dialogue. If the product genuinely doesn't need a chatbot, a dashboard, monetization, data optimization, a custom domain, or packaging, exit those skills quickly and move on. Don't bolt features on for novelty.
+
+**Order is not arbitrary.** Three dependencies anchor it:
+- **Compliance (03) before Auth (04)** — the signup form's TOS / Privacy checkbox needs those documents to exist and to be linked, and the consent record stores the document version accepted.
+- **Auth (04) before Admin dashboard (07)** — the Users tab and Waitlist tab need the user model and waitlist table.
+- **Auth (04) before Monetization (08, paid beta path)** — Stripe-gated access needs the user record.
 
 ## When you're done
 
