@@ -126,7 +126,7 @@ Allowed and expected. A common trajectory:
 quick-ship → beta-with-users → full-mvp → investor-ready
 ```
 
-When the user wants to switch, append a new "Mode change" line to `STATE.md` with the date and reason, then walk the *additional* skills the new mode requires. Skills already done at a previous mode don't re-run unless the user asks.
+When the user wants to switch, append a new "Mode change" line to `STATE.yaml` with the date and reason, then walk the *additional* skills the new mode requires. Skills already done at a previous mode don't re-run unless the user asks.
 
 ## Picking sub-skills inside a mode
 
@@ -136,4 +136,4 @@ Inside a sub-skill, the agent may still skip *sections* if the user says no (e.g
 
 ## Rule for the agent
 
-When you select a mode, write it to `STATE.md` immediately, list the ordered skill plan, and **read STATE.md at the start of every session** so you remember what you're doing and what's already done. STATE.md is the source of truth for project progress.
+When you select a mode, write it to `STATE.yaml` immediately, list the ordered skill plan, and **read STATE.yaml at the start of every session** so you remember what you're doing and what's already done. STATE.yaml is the source of truth for project progress.

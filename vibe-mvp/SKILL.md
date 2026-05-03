@@ -26,7 +26,7 @@ If the user proposes a definition of "done" that's looser than this (e.g., "just
 This file is the **entry point**. The companion files are:
 
 - `modes.md` — the catalog of 5 modes and how to pick one with 3 questions.
-- `STATE.template.md` — the template for the project-root `STATE.md` you'll write and maintain.
+- `STATE.template.yaml` — the template for the project-root `STATE.yaml` you'll write and maintain.
 - `01-discover.md` … `17-deliverables.md` — the 17 numbered sub-skills.
 
 The flow is always: **mode selection → bootstrap → walk the skills the mode prescribes, in order.**
@@ -37,22 +37,67 @@ For each sub-skill you do execute:
 1. **Read it fully before acting.**
 2. Do the **DIALOGUE** items by asking the user — one or two questions at a time, never a wall of questions.
 3. Do the **AUTONOMOUS** items yourself. Do not narrate every step; report at the end of the sub-skill.
-4. Update `PROJECT.md` (idea / audience / open questions) and `STATE.md` (skill plan progress, decisions, env keys, doc versions) at the project root.
+4. Update `PROJECT.md` (idea / audience / open questions) and `STATE.yaml` (skill plan progress, decisions, env keys, doc versions) at the project root.
 5. Move to the next sub-skill in the mode's plan.
 
 When in doubt, **prefer dialogue over assumption**. A 10-second question saves an hour of rework.
 
 ## Mode selection (always do this first, before bootstrap)
 
-If `STATE.md` exists at the project root, read it and skip to the **Initial assessment** section — the mode is already chosen.
+If `STATE.yaml` exists at the project root, read it and skip to the **Initial assessment** section — the mode is already chosen.
 
-If `STATE.md` does not exist, walk the user through `modes.md`:
+If `STATE.yaml` does not exist, **offer the user two ways to do mode selection + initial configuration**:
+
+> *"Two ways we can sort out the scope before any work starts:*
+>
+> *(a) **Quick chat** — I ask you 3 questions, suggest a mode, then we configure each piece in dialogue as we go. Fastest if you're comfortable typing back and forth.*
+>
+> *(b) **Visual configurator** — I open a small web UI in your browser. You pick a mode from cards, click through tabs, fill in the bits you care about, X out the bits you don't, then click 'Hand off to the agent'. I then read everything you set and continue from there. Better if you'd rather see all options at once and pick visually.*
+>
+> *Either is fine. Which do you prefer?"*
+
+### Path A — Quick chat (default)
 
 1. Ask the three intake questions from `modes.md` (audience size at launch / time horizon / what to validate). One at a time.
 2. Map the answers to a suggested mode using the table at the bottom of `modes.md`.
 3. **Tell the user**: which mode you suggest, the skills the mode includes, the skills it skips, and **what they're giving up** by not running the skipped ones. Be honest — don't sell.
 4. Wait for confirmation. The user can pick a different mode; the suggestion is a default, not a verdict.
-5. Once locked, copy `STATE.template.md` to `<project-root>/STATE.md`, fill in the metadata (mode, started date, project name), and remove the skills the mode skips from the plan list (or strike them through with a brief reason).
+5. Once locked, copy `STATE.template.yaml` to `<project-root>/STATE.yaml`, fill in the metadata (mode, started date, project name), and remove the skills the mode skips from the plan list (or strike them through with a brief reason).
+
+### Path B — Visual configurator
+
+The configurator is a small Vite + React app distributed at `https://vibecodersguidetomvp.help/vibe-coder-configurator.zip`. It reads/writes the same `STATE.yaml` you'd write by hand — both paths converge on the same file.
+
+1. **Get the configurator** (one-time setup):
+   ```bash
+   cd <project-root>
+   curl -sL https://vibecodersguidetomvp.help/vibe-coder-configurator.zip -o /tmp/configurator.zip
+   unzip -q /tmp/configurator.zip -d .vibe-configurator
+   cd .vibe-configurator && npm install && cd ..
+   ```
+   Add `.vibe-configurator/` to `.gitignore` so it doesn't pollute the project's commit history.
+
+2. **Copy the STATE template** into the project root if it isn't there yet:
+   ```bash
+   cp .vibe-configurator/STATE.template.yaml STATE.yaml
+   ```
+   (The template ships with the configurator zip.)
+
+3. **Start the configurator subprocess**, pointing it at the project's `STATE.yaml`:
+   ```bash
+   STATE_FILE=$(pwd)/STATE.yaml node .vibe-configurator/server.js
+   ```
+   Then offer to open it for the user:
+   > *"The configurator is running at http://localhost:5174 — opening it now."*
+   ```bash
+   open http://localhost:5174
+   ```
+
+4. **Wait for hand-off.** Watch `STATE.yaml` for the line `ready: true`. Until that flips, the configurator owns the file and the agent should not write to it. Poll lightly (every 5–10s) or just check at natural points (when the user comes back to chat).
+
+5. **On hand-off** (`ready: true`), read the full `STATE.yaml`, then **summarize the scope back to the user** in chat: *"You picked `<mode>`. You're including X / Y / Z, and skipping A / B / C because <reasons>. I want to suggest one or two things you didn't pick that I think are worth considering — but they're suggestions, not requirements."* List your suggestions with reasoning. On confirmation from the user, begin executing the skill plan.
+
+6. **The configurator can be reopened anytime** to revise. The agent should set `ready: false` again whenever it's actively working, then watch for the next hand-off if the user wants to revise mid-build.
 
 ## Operating rules (apply to every sub-skill)
 
@@ -67,7 +112,7 @@ If `STATE.md` does not exist, walk the user through `modes.md`:
   Always *ask first* before launching a browser window. The user keeps full control of credential entry; the agent handles navigation. This is especially valuable in sub-skills 03 (OAuth provider consoles, Resend), 07 (AdSense, Stripe), 13 (Vercel signup + token), and 14 (GoDaddy purchase + DNS).
 - **Pause before destructive or paid actions.** Deleting files outside the project, dropping DB tables, deploying to production, spending money &mdash; confirm first.
 - **Keep `PROJECT.md` current.** It is the user's source of truth (idea, audience, open questions) and your memory across sub-skills.
-- **Keep `STATE.md` current.** It is the *progress* source of truth — the mode, the skill plan, what's done, what's deferred, env keys configured (names only), document versions. Update at every sub-skill exit. Read at every session start.
+- **Keep `STATE.yaml` current.** It is the *progress* source of truth — the mode, the skill plan, what's done, what's deferred, env keys configured (names only), document versions. Update at every sub-skill exit. Read at every session start.
 - **Layman-friendly language.** The user is a smart non-engineer. Avoid jargon. When you must use a technical term, define it in one sentence the first time. Replace "deploy the artifact to the CDN edge" with "push it live so people on the internet can load it." Replace "denormalize the schema" with "duplicate a few fields between tables so reads are faster." If you find yourself reaching for an acronym, expand it.
 - **Simplest viable solution first.** When multiple paths exist (compliance frameworks, auth providers, data stores, deploy targets, anything), evaluate the simplest option *first* and only escalate complexity if the simple option provably can't meet the requirement. Don't pre-optimize for problems the user doesn't have yet. Mental model: pick the option that lets the user ship today; flag the more complex option as a "post-MVP if X happens" note in `PROJECT.md`.
 - **Suggest visual review via localhost.** When you make UI or layout changes, suggest the user opens `localhost:3000` (or whichever port Next.js picked) in a browser to watch alongside you. Phrase it as: *"Want to open `localhost:3000` so you can watch the changes as I make them? It builds confidence and we'll catch issues early."* Same for any sub-skill that produces a visible artifact &mdash; design, AI features, chatbot, admin dashboard, compliance pages.
@@ -76,7 +121,7 @@ If `STATE.md` does not exist, walk the user through `modes.md`:
 
 **If the project directory is empty (new project):**
 1. Create `PROJECT.md` with sections: `# Idea`, `# Audience`, `# Decisions`, `# Open questions`. Leave them empty for now.
-2. Create `STATE.md` from `STATE.template.md` (copy it). Fill in the metadata: mode, started date, project name. Strike or remove skills the mode skips.
+2. Create `STATE.yaml` from `STATE.template.yaml` (copy it). Fill in the metadata: mode, started date, project name. Strike or remove skills the mode skips.
 3. Create `.env.local` (empty) and add it to `.gitignore` along with `node_modules`, `.next`, `.vercel`.
 4. **Ask about git:** *"I'd like to use git for version control as we work — every change becomes undoable, and you'll have a clear record of how we built this. Want me to set that up?"* If yes, `git init`, ensure the `.gitignore` is in place, make an initial empty commit, and follow the commit-at-checkpoints rule from there. If no, skip and don't bring it up again.
 
@@ -86,7 +131,7 @@ Then begin with the first skill in the mode's plan (typically `01-discover.md`).
 1. Read `package.json`, `README.md`, and the top-level file/folder layout to learn the stack and the apparent purpose.
 2. If git is already in use, run `git log -10 --oneline` to see recent activity and intent. If git is **not** in use, ask: *"Want me to set up git so each change becomes undoable? It's a one-time setup."* — then proceed accordingly.
 3. If `PROJECT.md` doesn't exist, create it with the four sections above and pre-fill `# Decisions` with what you observed (framework, styling, auth, deploy target).
-4. If `STATE.md` doesn't exist, copy it from `STATE.template.md`, fill in the metadata using the locked mode and what you can infer from the codebase. (If `STATE.md` already exists, read it; that's the source of truth — don't overwrite it.)
+4. If `STATE.yaml` doesn't exist, copy it from `STATE.template.yaml`, fill in the metadata using the locked mode and what you can infer from the codebase. (If `STATE.yaml` already exists, read it; that's the source of truth — don't overwrite it.)
 5. Verify `.env.local` is gitignored. If it isn't, fix that immediately and tell the user. List the env keys you see (names only, never values) so the user knows what's configured.
 
 Then run the **Initial assessment** below before touching sub-skill `01-discover.md`.
@@ -113,7 +158,7 @@ This is the most important opening move on any project that already has code. It
 
 For an empty project, this collapses to one line — *"Empty directory, nothing to assess. Starting at sub-skill 01."* — and you proceed.
 
-After the user confirms, mirror the assessment into `STATE.md`'s skill plan (`[x]` for ✅, `[~]` for 🟡, `[ ]` for ⬜) and begin with the first sub-skill that isn't already done &mdash; typically `01-discover.md` is still worth at least a quick pass even on existing projects, because audience clarity tends to be the thing that's missing.
+After the user confirms, mirror the assessment into `STATE.yaml`'s skill plan (`[x]` for ✅, `[~]` for 🟡, `[ ]` for ⬜) and begin with the first sub-skill that isn't already done &mdash; typically `01-discover.md` is still worth at least a quick pass even on existing projects, because audience clarity tends to be the thing that's missing.
 
 ## Sub-skills (work through in order)
 

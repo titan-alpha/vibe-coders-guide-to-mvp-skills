@@ -98,7 +98,7 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
    > *"Both pass AA contrast and follow the 60-30-10 rule. **A** leans cooler / more authoritative; **B** leans warmer / more approachable. Which fits the audience better &mdash; or want me to iterate on either?"*
 
-   User picks one. Apply it. Note the choice and the reasoning in `STATE.md # Decisions`.
+   User picks one. Apply it. Note the choice and the reasoning in `STATE.yaml # Decisions`.
 3. **Icons:** install **Lucide React** (`npm install lucide-react`) and use it for every icon. It has 1400+ icons, perfect stroke consistency, and tree-shakes per-import so bundle stays tiny. Don't mix icon libraries; don't hand-roll SVGs for icons that Lucide already has.
    ```tsx
    import { ArrowRight, Check, Copy } from 'lucide-react';
@@ -258,7 +258,7 @@ Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJ
 - `globals.css` contains the locked theme (OKLCH values) and the chosen display font loaded via `@font-face` from Google Fonts.
 - `public/favicon.svg` exists and renders correctly as both the favicon (browser tab) and the inline header logo.
 - A tone label has been picked from the curated list, and color palette + display font were chosen against that tone with the user's approval.
-- Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.md # Decisions` with the reasoning.
+- Color palette was selected via the color-theory analysis (six dimensions), passes WCAG AA contrast, and is recorded in `STATE.yaml # Decisions` with the reasoning.
 - Header has the 4-element layout (logo, title, bell if notifications, hamburger). The hamburger contains every top-level page plus Settings (when auth exists). Footer carries About / Contact / legal.
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
 - A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, the core user journey sentence, and any flow-critique items deferred to post-MVP.

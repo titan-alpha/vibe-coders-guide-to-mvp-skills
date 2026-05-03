@@ -140,7 +140,7 @@ Once an email service is wired, the agent should figure out **which emails this 
 
 ### 1. Read the project context
 
-Read `PROJECT.md` and `STATE.md` end-to-end. Pull out:
+Read `PROJECT.md` and `STATE.yaml` end-to-end. Pull out:
 
 - **What the product does** (the one-line description and the core user flow).
 - **Who uses it** (target audience — consumers, internal team, paid B2B, etc.).
@@ -181,7 +181,7 @@ For each row, the user can **approve**, **decline**, or **edit** (rename, change
 
 For approved triggers, write `lib/email-templates.ts` with one exported function per trigger (e.g., `signupConfirmationHtml(args)`, `lowUsageWarningHtml(args)`, `subscriptionReceiptHtml(args)`). Emails are a brand surface — they should look like the product, not like generic transactional HTML. Every template **must** conform to the design tokens locked in sub-skill 02.
 
-**Token-loading note (do this first).** Before writing any template, populate the `TOKENS` constant from the values locked in `STATE.md # Decisions`:
+**Token-loading note (do this first).** Before writing any template, populate the `TOKENS` constant from the values locked in `STATE.yaml # Decisions`:
 
 - **Tone label** — `editorial` / `tech` / `friendly` / `luxurious` / `playful` / `brutalist`. Used to drive copy voice (see point g below).
 - **Display font** — e.g., `Fraunces`, `Inter Tight`, `Space Grotesk`. Used for H1 and primary CTA.
@@ -189,11 +189,11 @@ For approved triggers, write `lib/email-templates.ts` with one exported function
 - **Neutral / surface colors** — background, foreground, muted, border (all as hex).
 - **Logo** — read `public/favicon.svg`, replace any `var(--…)` fills with the resolved hex colors, then base64-encode it as a `data:image/svg+xml;base64,…` URL.
 
-If sub-skill 02 has not been run (or design tokens are not locked in `STATE.md # Decisions`), **refuse to generate templates**:
+If sub-skill 02 has not been run (or design tokens are not locked in `STATE.yaml # Decisions`), **refuse to generate templates**:
 
 > *"I can't generate platform-conforming email templates until the design tokens are locked in sub-skill 02. Want to finish that first, or would you prefer placeholder templates I'll restyle later?"*
 
-You may store the resolved tokens directly in `lib/email-templates.ts` (simplest), or duplicate them in `PROJECT.md` for runtime access if `STATE.md` isn't queryable from server code. Either works — pick what fits the project.
+You may store the resolved tokens directly in `lib/email-templates.ts` (simplest), or duplicate them in `PROJECT.md` for runtime access if `STATE.yaml` isn't queryable from server code. Either works — pick what fits the project.
 
 **Each template must:**
 
@@ -210,7 +210,7 @@ f. **Keep the layout simple and elegant**:
    - One muted footer line (sender info + unsubscribe for marketing).
    - Generous whitespace: 32px padding around the container, 24px between major elements.
    - No background images, no gradients, no decorative borders. Trust the platform's color and typography to do the work.
-g. **Match the platform's tone in voice.** Read the tone label from `STATE.md` and write copy that matches:
+g. **Match the platform's tone in voice.** Read the tone label from `STATE.yaml` and write copy that matches:
    - **Friendly** → conversational ("Hey Noa, your account is ready 👋").
    - **Editorial** → measured prose, full sentences, no exclamations.
    - **Tech** → terse, factual, no fluff.
@@ -240,11 +240,11 @@ A footer line is included only on **marketing-class** emails (digests, re-engage
 // lib/email-templates.ts
 import { readFileSync } from 'node:fs';
 
-// Read the locked tokens once at module load. These come from STATE.md
-// (or duplicate them in PROJECT.md for runtime access if STATE.md isn't
+// Read the locked tokens once at module load. These come from STATE.yaml
+// (or duplicate them in PROJECT.md for runtime access if STATE.yaml isn't
 // queryable from server code — both work; pick what fits the project).
 const TOKENS = {
-  primary: '#2563eb',                    // resolved from STATE.md OKLCH
+  primary: '#2563eb',                    // resolved from STATE.yaml OKLCH
   surface: '#f8fafc',
   fg: '#0f172a',
   muted: '#64748b',

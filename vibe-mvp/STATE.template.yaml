@@ -1,0 +1,118 @@
+# STATE.yaml — project progress source of truth.
+#
+# Lives at the project root (not in the skills directory). Read at session
+# start; updated after every sub-skill exits and whenever a decision is
+# locked. Bidirectional with the configurator UI: see modes.md and SKILL.md
+# for the mode-selection ritual.
+#
+# Update rules (for the agent):
+#   1. At session start: read this file before any tool call. Trust it.
+#   2. At sub-skill start: set skills.<id>.status to 'active'.
+#   3. At sub-skill exit: set status to 'completed' (or 'skipped'), append a
+#      one-line note, update relevant sections (decisions, env_keys, etc.),
+#      and bump last_updated.
+#   4. When the user changes a decision: append to decisions with the new
+#      value; the prior value is overwritten in place but the change is
+#      reflected in the configurator and visible in git history.
+#   5. When the user switches modes: append a row to mode_changes; reseed
+#      skills accordingly (configurator does this automatically).
+
+mode: null                    # quick-ship | content-site | beta-with-users | full-mvp | investor-ready
+started: ""                   # YYYY-MM-DD
+last_updated: ""              # ISO 8601
+project_name: ""              # working title
+public_url: ""                # *.vercel.app or custom domain, or "" if not deployed yet
+
+# ── Skill plan ────────────────────────────────────────────────────────
+# One key per skill the mode includes. Each entry has:
+#   status:      pending | active | completed | skipped
+#   note:        one-line summary of what was decided / shipped
+#   skip_reason: why this skill was skipped (only when status=skipped)
+skills: {}
+# Example:
+# skills:
+#   "01-discover":
+#     status: completed
+#     note: "Recipe app for casual home cooks 25-45; MVP slice = save+search 100 starter recipes"
+#   "08-analytics":
+#     status: skipped
+#     skip_reason: "deferred to post-launch when there's signal"
+
+# ── Locked decisions ──────────────────────────────────────────────────
+# Append-only conceptually — the agent overwrites in place but should never
+# delete a key, only update its value. The configurator writes here too.
+decisions:
+  # Discover (sub-skill 01)
+  idea: ""
+  audience: ""
+  mvp_slice: ""
+  access_model: ""             # open | waitlist | paid
+
+  # Design (sub-skill 02)
+  tone_label: ""               # editorial | tech | friendly | luxurious | playful | brutalist
+  display_font: ""             # e.g., "Inter Tight"
+  primary_color: ""            # hex, e.g., "#a855f7"
+  primary_color_oklch: ""      # OKLCH equivalent
+  notifications_enabled: false # adds bell icon to header + Notifications admin tab
+
+  # Auth (sub-skill 04)
+  auth_path: ""                # credentials | magic-link | oauth
+  oauth_providers: []          # subset of: Google, GitHub
+  email_service: ""            # resend | sendgrid | none
+  email_triggers: []           # approved triggers from the catalog in 04-auth
+
+  # Admin (sub-skill 07)
+  admin_tabs: []               # subset of: Overview, Users, Waitlist, Usage, Notifications, Analytics
+  initial_usage_grant: 0       # baked into every new user's usageGranted at signup
+
+  # Analytics (sub-skill 08)
+  analytics_scope: []          # subset of: investor, internal
+  analytics_tool: ""           # self-hosted | posthog | plausible
+  north_star: ""               # one-sentence definition
+
+  # Monetization (sub-skill 09)
+  monetization_path: ""        # none | adsense | stripe-saas | stripe-paid-beta
+  stripe_plans: []             # [{ name, amount_cents, interval: month|year|one_time }]
+
+  # Stack (set by sub-skill 02)
+  stack: ""                    # e.g., "Next.js 15 + Tailwind v4 + DaisyUI + Drizzle + Postgres (Neon)"
+
+# ── Versioned consent documents (sub-skill 03) ────────────────────────
+document_versions:
+  tos: ""                      # YYYY-MM-DD of last_updated in /terms
+  privacy: ""                  # YYYY-MM-DD of last_updated in /privacy
+
+# ── Env keys configured (names only — never values) ───────────────────
+env_keys: []
+# Example:
+# env_keys:
+#   - AUTH_SECRET
+#   - RESEND_API_KEY
+#   - EMAIL_FROM
+#   - ACCESS_MODE
+#   - INITIAL_USAGE_GRANT
+#   - ADMIN_PASSWORD_BOOTSTRAP
+
+# ── Sub-processors with signed DPAs (sub-skill 03) ────────────────────
+sub_processors: []
+# Example:
+# sub_processors:
+#   - { name: "OpenAI", dpa_signed: "2026-05-03" }
+#   - { name: "Resend", dpa_signed: "2026-05-03" }
+
+# ── Open questions / blockers ─────────────────────────────────────────
+open_questions: []
+
+# ── Mode change history ───────────────────────────────────────────────
+mode_changes: []
+# Example:
+# mode_changes:
+#   - { date: "2026-05-10", from: "quick-ship", to: "beta-with-users", reason: "MVP working; ready to invite testers" }
+
+# ── Hand-off flag from the configurator ───────────────────────────────
+# When the user clicks "Hand off to the agent" in the configurator UI, this
+# becomes true. The agent should detect the change, summarize the locked
+# scope back to the user, suggest anything it thinks is missing (always as
+# a suggestion, not a requirement), then on confirmation build exactly what
+# the configurator captured.
+ready: false

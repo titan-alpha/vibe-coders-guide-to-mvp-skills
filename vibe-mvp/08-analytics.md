@@ -352,7 +352,7 @@ Plausible auto-tracks page views. No event instrumentation needed for a content 
 
 ## Exit criteria
 
-- The user has answered the two scope questions; the chosen metric set is captured in `STATE.md # Decisions`.
+- The user has answered the two scope questions; the chosen metric set is captured in `STATE.yaml # Decisions`.
 - For self-hosted: `lib/analytics.ts` and `lib/analytics-aggregates.ts` exist; `userActions` (and any other added) tables are migrated; ≥5 event call sites are wired.
 - For PostHog: `lib/posthog.ts` is wired and the same `track` interface is exported; events flow through to the PostHog dashboard.
 - For Plausible: the script is in `app/layout.tsx` and the Plausible dashboard shows page views from localhost.

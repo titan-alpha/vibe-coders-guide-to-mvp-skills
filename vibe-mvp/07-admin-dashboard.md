@@ -18,7 +18,7 @@ Then, in the same exchange, ask about notifications:
 
 > *"The dashboard will also let you send notifications to all users or to specific users — they appear in a bell icon at the top-right of the site. OK to include that, or skip notifications and just have the user-management tabs?"*
 
-If the user opts out of notifications: skip Tab 5 entirely AND tell them to inform sub-skill 02 to leave out the bell icon (or note in `STATE.md` `# Decisions`: "Notification center: skipped — header has no bell icon").
+If the user opts out of notifications: skip Tab 5 entirely AND tell them to inform sub-skill 02 to leave out the bell icon (or note in `STATE.yaml` `# Decisions`: "Notification center: skipped — header has no bell icon").
 
 If the user declines the dashboard altogether, skip and move on to `08-monetization.md`. (For a project with auth, gently flag that without an admin dashboard they'll be running SQL by hand to manage users — they'll likely come back to this.)
 
@@ -297,7 +297,7 @@ For better UX (custom login form instead of the browser prompt), build `/admin/l
 
 ## AUTONOMOUS — build the dashboard with five tabs
 
-`/admin` has five tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.md # Decisions`.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
+`/admin` has five tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
 
 ```tsx
 // app/admin/layout.tsx
@@ -754,7 +754,7 @@ export async function POST(req: Request) {
 }
 ```
 
-The header bell consumes these three endpoints; the agent wires the front-end in sub-skill 02 when building the header. If the founder opted out of notifications in the opening DIALOGUE, sub-skill 02 should leave the bell out of the header entirely — `STATE.md # Decisions` is the source of truth.
+The header bell consumes these three endpoints; the agent wires the front-end in sub-skill 02 when building the header. If the founder opted out of notifications in the opening DIALOGUE, sub-skill 02 should leave the bell out of the header entirely — `STATE.yaml # Decisions` is the source of truth.
 
 ## Cache aggressively
 
@@ -787,7 +787,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 - **Notifications** tab works: send to all, send to specific users (multi-select with email filter), sent-history table with read counts.
 - DB has `notifications` and `notification_recipients` tables.
 - The three header bell endpoints (`/api/notifications/unread-count`, `/api/notifications/recent`, `/api/notifications/mark-read`) exist and return correct data for the signed-in user.
-- `STATE.md # Decisions` records whether notifications are enabled (so sub-skill 02 knows whether to render the bell).
+- `STATE.yaml # Decisions` records whether notifications are enabled (so sub-skill 02 knows whether to render the bell).
 - Any new instrumentation is documented under `# Decisions` in `PROJECT.md`.
 
 Move on to `08-analytics.md` (or skip to `09-monetization.md` if analytics aren't in scope for this mode).
