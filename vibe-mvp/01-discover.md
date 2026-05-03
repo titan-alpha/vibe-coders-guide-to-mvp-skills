@@ -11,6 +11,11 @@ Ask these one or two at a time, in conversation. Reflect their answers back in y
 3. **The job.** "What does success look like for that person in their first 60 seconds on the site?"
 4. **The slice.** "If we could only ship one feature this week, which one earns their trust?"
 5. **The non-goals.** "What are we explicitly *not* building in v1?"
+6. **The access model.** "How should people get into v1? Three common options:
+   - **Open signup** — anyone can sign up immediately. Best for content/tool products where you want growth.
+   - **Free beta with waitlist** — anyone can ask to join, you (the admin) approve who gets in. Best when you want to moderate the user base, watch quality, or run early-cohort feedback loops without scale.
+   - **Paid beta** — users pay to access. Requires Stripe. Best when you want to validate willingness to pay from day one.
+   *Which fits?*" Capture the answer. This decision shapes sub-skills 04 (auth modes), 07 (admin dashboard tabs), and 08 (Stripe needed or not).
 
 If the user gives a vague answer ("I want it to be like Notion but for X"), drill in: pick one workflow and describe it concretely.
 
@@ -26,6 +31,7 @@ After the dialogue:
 ## Exit criteria
 
 - `PROJECT.md` has populated `# Idea`, `# Audience`, `# Decisions` sections.
+- `# Decisions` includes a one-line **Access model** entry: `open signup` / `free beta with waitlist` / `paid beta` (with Stripe noted if paid).
 - The user has confirmed the MVP slice in their own words.
 - No more than 2 open questions remain (and they're flagged, not blocking).
 

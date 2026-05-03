@@ -1,4 +1,4 @@
-# 04 · AI Integration
+# 05 · AI Integration
 
 Goal: get the right AI capability into the product without lock-in or runaway cost. Most modern MVPs benefit from at least one AI feature; this skill makes that integration boring, typed, and cheap.
 
@@ -215,4 +215,4 @@ For images, use `'omni-moderation-latest'` with a multimodal input (URL or base6
 - One AI feature is wired end-to-end and the user has tried it on `localhost`.
 - A `# AI` line in `PROJECT.md` records: which feature, which schema, expected per-call cost.
 
-Move on to `05-chatbot.md`.
+Move on to `06-chatbot.md`.

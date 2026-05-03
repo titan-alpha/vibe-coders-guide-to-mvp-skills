@@ -1,14 +1,16 @@
-# 08 · Regulatory Compliance
+# 03 · Regulatory Compliance
 
 Goal: identify the **minimum** compliance surface the product needs at beta, and implement exactly that. No more. Compliance is a floor, not a finish line &mdash; over-building it at MVP stage kills momentum.
 
+This sub-skill runs **before auth** because the upcoming signup form's TOS / Privacy checkbox needs the documents to exist and to be linkable, and the consent record stores which version each user accepted.
+
 ## DIALOGUE — does the product want a compliance pass?
 
-This skill is optional, but nearly every product with user accounts, AI, or analytics needs *some* coverage before beta. Ask:
+For any project with auth (open signup, waitlist, or paid beta &mdash; the access model picked in sub-skill 01), this is **required**, not optional. For a strictly read-only static site with no signup, no analytics, and no cookies, you can skip; tell the user that and confirm before doing so.
 
-> *"Want me to do a quick compliance pass? I'll look at what your product collects, who uses it, and where they live &mdash; then tell you which regulations apply, and we'll build exactly the minimum that covers you. For a signup flow that means a Terms of Service, Privacy Policy, and agreement checkboxes. No more than that."*
+> *"I'll do a quick compliance pass now &mdash; before we wire up signup &mdash; so the Terms of Service and Privacy Policy are ready when the signup form needs to link to them. I'll look at what your product collects, who uses it, and where they live, then tell you which regulations apply, and we'll build exactly the minimum. Sound good?"*
 
-If the user declines, skip and move on to `09-accessibility.md`. (But note it in `# Open questions` in `PROJECT.md` &mdash; they'll want to revisit before any marketing push.)
+If the user has a strong reason to defer (e.g., they want to wireframe auth first to demo to a stakeholder), note it in `# Open questions` in `PROJECT.md` and tag sub-skill 04 as needing a compliance follow-up before public launch. Do not let auth ship without TOS/Privacy in any project that takes user signups.
 
 ## AUTONOMOUS — analyze the platform
 
@@ -124,9 +126,9 @@ Date-stamp the bottom of each page. Keep a `# Changelog` section.
 
 **Disclaimer to the user:** these are drafted for beta and are not a substitute for a lawyer. Tell the user this out loud. Suggest a ~$500 legal review (e.g., TermsFeed / Iubenda templates reviewed by a real attorney, or a Clerky/LegalZoom lawyer for a fixed fee) before the product gets past beta or takes money.
 
-### 2. Signup-flow consent checkboxes
+### 2. Signup-flow consent checkboxes (spec for sub-skill 04)
 
-Modify the signup form built in sub-skill 03. Add:
+The signup form doesn't exist yet &mdash; sub-skill 04 will build it. Drop the markup snippet below into `PROJECT.md` under `# Compliance` so sub-skill 04 picks it up verbatim:
 
 ```tsx
 <label className="label cursor-pointer justify-start gap-2">
@@ -207,4 +209,4 @@ If you added non-essential cookies (analytics, marketing pixels), show a cookie 
 - The privacy contact email the user provided is reachable and monitored.
 - A `# Compliance` section in `PROJECT.md` lists the regulations covered, the sub-processors with signed DPAs, and a note recommending a legal review before general availability.
 
-Move on to `09-accessibility.md`.
+Move on to `04-auth.md`.
