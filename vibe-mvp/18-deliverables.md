@@ -166,6 +166,132 @@ open deliverables/
 
 Then report a short summary listing every file produced with a one-line description.
 
+## AUTONOMOUS — assemble the launch sequence
+
+A coordinated launch typically gets 5&ndash;10&times; the initial traction of an uncoordinated one, and the work all happens **before** the launch button is pressed. The agent assembles the launch plan and walks the user through executing it.
+
+### 1. Launch surfaces &mdash; pick the relevant ones
+
+Not every product belongs everywhere. Match surfaces to the audience:
+
+| Surface | Right when | Wrong when | Sweet-spot launch day |
+| --- | --- | --- | --- |
+| **Product Hunt** | B2C / SaaS / dev tools / consumer with broad-ish appeal | Hyper-niche B2B; regulated industries | Tuesday or Thursday, scheduled 12:01 AM PT |
+| **Hacker News (Show HN)** | Technical audience; dev tools; novel approach | Marketing-heavy products; non-technical audience | Tuesday/Wednesday morning ET; submit text-only "Show HN: &hellip;" with a clear what-this-does first sentence |
+| **Twitter/X thread** | Founder has any following; product is screenshot-able | No following + not screenshot-able | Same-day morning ET, 5&ndash;8 tweet thread with a clear hook |
+| **Reddit (relevant subreddit)** | Audience lives in a specific subreddit | No clear sub; subs that ban self-promo | Tuesday 9 AM ET in the relevant sub; check sub rules first |
+| **LinkedIn post** | B2B, enterprise, founder is on LinkedIn | Pure consumer | Tuesday 8 AM ET; lead with a story not a feature list |
+| **Pre-built waitlist email** | You have a waitlist | You don't | Same morning, 1 hour before public launch |
+| **Indie Hackers** | Solo / small team founder story | Big-company-funded launches | Same week; less time-sensitive |
+| **Beta-list emails (Betalist, BetaList.com)** | Want extra surface area | Not worth alone | 2 weeks before public launch (queue time) |
+
+The agent reads `PROJECT.md` audience + `STATE.yaml decisions.access_model` + the product type to pick the 3&ndash;5 most relevant surfaces. Don't try to launch on all of them &mdash; better focused than scattered.
+
+### 2. Pre-launch checklist (T-7 days)
+
+- [ ] Production URL works end-to-end on a brand-new account (run `tests/e2e/flows/` against prod).
+- [ ] Status page is live (sub-skill 11 disaster-prep) and the founder can update it in &lt;30s.
+- [ ] Waitlist email drafted and scheduled (or queued in Resend).
+- [ ] Product Hunt asset bundle prepared (gallery images at 1270&times;760, 1-line tagline, "first comment" introduction post, founder bio).
+- [ ] Hacker News title drafted (under 80 chars, "Show HN: &lt;product&gt; &ndash; &lt;one-line clear value prop&gt;").
+- [ ] Twitter thread drafted (5&ndash;8 tweets, hook first, screenshots in tweets 2&ndash;4, ask for feedback in last tweet).
+- [ ] Cost ceilings configured + verified (sub-skill 11) &mdash; a viral spike must NOT result in a $5K bill.
+- [ ] Error alerting active and tested with a synthetic event (sub-skill 11 + 07).
+- [ ] Five sympathetic friends warned: they'll upvote / comment / share within the first 30 minutes.
+
+### 3. Day-of choreography (T+0)
+
+The agent generates a per-launch playbook based on the surfaces picked. Sample for a typical Product Hunt + HN + Twitter coordinated launch:
+
+```
+12:01 AM PT — Product Hunt post goes live (auto-scheduled).
+06:00 AM ET — Founder posts the "first comment" introduction on PH.
+07:30 AM ET — Hacker News submission ("Show HN: …").
+08:00 AM ET — Twitter thread + retweet from any team accounts.
+08:30 AM ET — Waitlist email goes out.
+09:00 AM ET — Sympathetic friends batch (DMs go out asking for support).
+10:00 AM–6:00 PM — Founder is glued to the comment threads, replying to every comment within 10 min.
+06:00 PM ET — End-of-day Twitter recap with "thank you + here's what we learned" thread.
+```
+
+The founder's job day-of is to **respond, not promote**. Reply to every comment, debug every reported issue, thank every supporter. The product launching is one variable; how the founder shows up is the other.
+
+### 4. Post-launch (T+1 to T+30)
+
+- T+1: Send a personal thank-you to the top 10 commenters / reviewers.
+- T+3: Write a "what we learned" blog post / Twitter thread.
+- T+7: Begin the first-10-users 1-on-1 discovery (see next section).
+- T+14: Iterate on the top user feedback, ship a `MINOR` bump (sub-skill 14), email the waitlist with what's new.
+- T+30: Honest retrospective in `PROJECT.md` &mdash; what worked, what didn't, what's next.
+
+## AUTONOMOUS + DIALOGUE — the first-10-users discovery process
+
+Once the MVP is live and the first wave of users have signed up, the highest-leverage activity is **1-on-1 sessions with the first 10 of them**. This is where you find out what's really confusing, where the value lives, what to build next.
+
+This is post-MVP work the agent helps the user do &mdash; not pre-MVP validation (see SKILL.md "Build first, validate after" rule).
+
+### 1. Who to invite
+
+From the first 30 signups, pick 10 who match the audience profile most closely. Reach out personally:
+
+> *"Hey [name] &mdash; saw you signed up for [product]. I'm the founder; would you be up for a 30-minute Zoom this week so I can watch you use it and ask a few questions? It really helps me figure out what to build next."*
+
+Most people say yes. Block 30-min slots over 1&ndash;2 weeks. Don't batch them all in one day; you'll lose pattern-recognition.
+
+### 2. What to ask &mdash; agent generates platform-specific questions
+
+The agent reads `PROJECT.md` (audience, MVP slice, positioning) and proposes a discovery script tailored to this product. Generic baseline questions (every script):
+
+- "Walk me through how you found this." *(acquisition signal)*
+- "What did you expect when you signed up? Did it match?" *(expectation gap)*
+- "Show me how you'd use this for a real task &mdash; pretend I'm not here." *(observe friction)*
+- "What surprised you (good or bad)?" *(pattern interrupts)*
+- "What would you tell a friend it does, in one sentence?" *(positioning validation)*
+- "What's the next thing you'd want to do that you can't?" *(next-feature signal)*
+- "If this disappeared tomorrow, would you actually miss it?" *(retention signal &mdash; the hardest, most honest question)*
+
+Then 3&ndash;5 platform-specific questions the agent generates. Examples:
+
+| Platform type | Sample tailored questions |
+| --- | --- |
+| Recipe app | "How do you usually decide what to cook on a weeknight? Where does this fit in?" |
+| Dev tool | "What's the friction you hit between [step A] and [step B]? Does this remove it or shift it?" |
+| Marketplace | "Have you tried to [transact]? Walk me through what you'd want to happen next." |
+| Community | "Would you post here? What would stop you?" |
+| AI product | "When did the AI feel useful vs feel in the way? Be specific." |
+
+### 3. Record the session
+
+With permission, record + transcribe (Zoom can do both). The transcript is the artifact &mdash; the agent processes it later to extract patterns.
+
+### 4. Feed transcripts to the agent
+
+After 3+ sessions, paste each transcript (or upload via the configurator's Discovery tab) into the project. The agent reads them and produces:
+
+- **Themes that recurred** across users (3+ mentions = signal; 2 = noise; 1 = ignore unless it's a critical bug).
+- **Confusion points** &mdash; where every user paused, asked a question, or got lost. Each one becomes a UX fix.
+- **Words users used** &mdash; the actual vocabulary your audience speaks. The landing page copy should mirror this language.
+- **Feature requests** &mdash; collected, deduplicated, ranked by frequency &times; audience-fit.
+- **Retention signal** &mdash; for the "would you miss it" question, count yes / yes-but-only-for-X / no answers.
+
+The agent writes the synthesized insights to `PROJECT.md # Discovery insights` and proposes 3 concrete changes to make next, in priority order. The user picks which ones to act on.
+
+### 5. Configurator's Discovery tab
+
+If the user is using the configurator (Path B), the Discovery tab provides:
+
+- A textarea per session to paste a transcript.
+- A "Suggested questions for your next session" panel (the agent generates these based on what came up in prior sessions &mdash; gaps to dig into).
+- A live "Themes I'm seeing" sidebar that updates as new transcripts are added.
+- A button to generate the next iteration plan from current insights.
+
+### Anti-patterns
+
+- **Asking leading questions.** "Did you find this useful?" gets "yes." "Walk me through what you tried" gets the truth.
+- **Defending the product mid-session.** When the user is confused, the agent (and the founder) should ask "tell me more" not "actually it's because&hellip;". Defense kills signal.
+- **Acting on a single data point.** Two users in a row asking for X is interesting; one user asking for X is just one user.
+- **Skipping the "would you miss it" question.** It's the only honest measure of retention you can get pre-product-market-fit.
+
 ## Anti-patterns to avoid
 
 - **Generating all deliverables every time.** Only produce what the user selected. A pitch deck the founder didn't ask for is noise.
@@ -181,5 +307,8 @@ Then report a short summary listing every file produced with a one-line descript
 - Finder has been opened on the `deliverables/` directory so the user sees everything in one glance.
 - A `# Deliverables` section in `PROJECT.md` lists which were produced and when.
 - The user has been told, one-line-per-file, what was generated.
+- Launch playbook is written into `deliverables/launch-playbook.md` with picked surfaces + day-of timeline + pre-launch checklist.
+- For investor-ready: discovery process is set up, even if discovery itself happens post-deploy.
+- Discovery insights template (`PROJECT.md # Discovery insights`) exists as a placeholder ready for the first transcripts.
 
 You're done. Congratulate them &mdash; they shipped, and they have the packaging to share it.

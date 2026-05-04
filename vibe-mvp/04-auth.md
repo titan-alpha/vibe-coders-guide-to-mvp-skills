@@ -347,6 +347,72 @@ if (process.env.NODE_ENV !== 'production' && process.env.EMAIL_DEBUG !== 'off') 
 
 Add `tmp/` to `.gitignore`. After generating templates, the agent should trigger one of each via a small script or by walking the user through the corresponding flow, then `open tmp/emails/<file>.html` to preview.
 
+### Lifecycle email (the retention lever, not the plumbing)
+
+The transactional triggers above (signup, reset, etc.) are plumbing. Lifecycle email is what drives retention — the agent ships these as a separate class, with explicit timing and content rules:
+
+| Trigger | Fires when | Content shape | Who needs it |
+| --- | --- | --- | --- |
+| **Welcome / day-1** | 24h after signup | Personal note from founder + the single most-important next step | Every product with auth |
+| **Day-3 onboarding** | 72h after signup | "How's it going? Here's a tip you might have missed: [feature]" | Products with depth (more than one core feature) |
+| **Day-7 re-engagement** | 7d if no return visit | "We noticed you haven't been back. Here's what's new since you signed up." | Products with retention as a goal |
+| **Day-14 milestone-or-bust** | 14d post-signup | "Has [product] been useful? Quick reply if anything's blocking you." (founder-personal) | All products. This is your last chance to reactivate. |
+| **Weekly digest** | Every Mon (or audience-relevant day) | Round-up of the user's own activity + new content/features | Content products, social products, productivity tools |
+| **Re-engagement after N days inactive** | 30d / 60d / 90d inactive | Tiered: 30d = "still here?"; 60d = "what changed?"; 90d = "we're sorry to see you go" with optional unsubscribe | Any product where churn is a real metric |
+| **Win-back after deactivation** | 30d after `deactivatedAt` | "If you cancel intentionally — no email. If something pushed you out — we want to fix it." | Products with monetization |
+| **Feature announcement** | Triggered manually or on every MINOR/MAJOR release tag (sub-skill 14) | "What's new in v0.4 — TLDR: [headline + screenshot]" | Any product after first 50 users |
+
+The agent **proposes which lifecycle triggers fit the platform** based on `PROJECT.md` audience + `decisions.access_model` + product type — same proposal-table dialogue as the transactional triggers section already uses.
+
+**Implementation pattern** — these aren't fired by user actions; they're scheduled. Use Vercel Cron (or platform equivalent) hitting an internal API route that queries who's eligible for which template:
+
+```ts
+// app/api/internal/cron/lifecycle/route.ts
+import { db } from '@/lib/db';
+import { users } from '@/lib/db/schema';
+import { eq, lt, gt, and, isNull } from 'drizzle-orm';
+import { sendEmail } from '@/lib/email';
+import { day1WelcomeHtml, day7ReengageHtml /* ... */ } from '@/lib/email-templates';
+
+export async function GET(req: Request) {
+  // Auth: require a CRON_SECRET header so randos can't trigger sends.
+  if (req.headers.get('x-cron-secret') !== process.env.CRON_SECRET) {
+    return new Response('forbidden', { status: 403 });
+  }
+
+  const now = new Date();
+  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+  // Day-1 welcome — users who signed up between 24-48h ago and haven't been welcomed yet.
+  const candidates = await db.select().from(users).where(and(
+    lt(users.createdAt, dayAgo),
+    gt(users.createdAt, twoDaysAgo),
+    isNull(users.welcomedAt),
+  ));
+  for (const u of candidates) {
+    await sendEmail({ to: u.email, subject: `Welcome, ${u.firstName}`, html: day1WelcomeHtml({ firstName: u.firstName }) });
+    await db.update(users).set({ welcomedAt: now }).where(eq(users.id, u.id));
+  }
+  // ... similarly for day-3, day-7, etc. ...
+  return Response.json({ ok: true });
+}
+```
+
+Schedule in `vercel.json`:
+
+```json
+{ "crons": [{ "path": "/api/internal/cron/lifecycle", "schedule": "0 14 * * *" }] }
+```
+
+(Daily at 14:00 UTC = morning ET, when emails get the best open rates for B2C; B2B audiences are fine in the same window.)
+
+**Conform to platform email styling.** Each lifecycle template uses the same `shell()` helper from the existing email-templates section so brand consistency is automatic. The agent uses the configurator's `component_pick` channel to show 2-3 visual variants of the day-1 welcome and lets the user pick — same flow as the design picks in 02-design.
+
+**Frequency cap**: no user receives more than 2 lifecycle emails in any 7-day window. If both day-7 re-engage and weekly digest are eligible the same day, send the more-targeted one (re-engage) and skip the digest.
+
+**Unsubscribe**: every lifecycle email includes a one-click `/unsubscribe?token=...` link that flips `users.email_lifecycle = false` (separate from transactional). The agent adds the column when wiring the first lifecycle trigger.
+
 ## Auth.js — install and wire
 
 ```bash
@@ -710,5 +776,6 @@ For OAuth users, the first sign-in inserts a `users` row with no `passwordHash`.
 - Templates compose from a single `shell()` helper so the styling is consistent by construction.
 - If sub-skill 02 hasn't locked design tokens, the agent did not generate templates — it stopped and asked.
 - The DEV email-debug helper writes to `tmp/emails/` and is gitignored.
+- Lifecycle email work is scheduled via cron (`vercel.json` or platform equivalent), frequency-capped to 2 per user per 7-day window, and one-click-unsubscribable; the `users.email_lifecycle` column has been added and wired into the unsubscribe handler.
 
 Move on to `05-ai-integration.md`.

@@ -106,6 +106,36 @@ Tick each one. Anything that fails goes back to the relevant sub-skill.
 - [ ] If geographic compliance choice was **(b) IP-block**, verify the middleware is live: `curl -H 'x-vercel-ip-country: GB' https://<your-domain>/` returns `451 Unavailable for Legal Reasons` with the polite-explanation page.
 - [ ] If geographic compliance choice was **(a) comply**, the privacy policy lists every sub-processor with a signed DPA (OpenAI, Resend, Vercel, Stripe, Upstash, etc.) and the data-export + delete endpoints work end-to-end (test with a real test account).
 
+### Cost protection (verifies SKILL.md cost rule + sub-skills 07, 11)
+
+- [ ] Every external service that bills usage-based has BOTH an in-app ceiling (sub-skill 07's `serviceCeilings`) AND a platform-level cap (sub-skill 11's `platform_cost_caps`). Verify by checking `STATE.yaml decisions.platform_cost_caps` is populated for: openai, vercel, resend, neon, sentry (whichever apply).
+- [ ] Hard-block behavior tested for at least one service. In a non-prod env, set the OpenAI in-app ceiling to a value below current month-to-date spend; verify `cachedAiCall` throws `BudgetExhausted`.
+- [ ] Critical-class transactional email (password reset) bypasses lifecycle caps. Verify by setting `decisions.cost_ceilings.resend` to a value below MTD; trigger a password reset; confirm the email still sends with a logged warning.
+
+### Alerting (verifies sub-skill 07 Tab 8 + sub-skill 11)
+
+- [ ] If alerts are enabled in `STATE.yaml decisions.error_alerts_enabled`: founder has set `ALERT_EMAIL_RECIPIENT` env in production. Verify with the "Send test alert" button in `/admin/alerts` and confirm the email actually arrived.
+- [ ] Frequency cap is enforced. Send 5 synthetic alerts with the same source+title in 30 seconds; verify only 1 email was dispatched.
+- [ ] Sentry (or equivalent) is wired and forwarding to `alertEvents` if `SENTRY_DSN` is set. Verify by `throw`ing inside a Route Handler and confirming a row appears in `alertEvents` within 60 seconds.
+- [ ] Cost-ceiling-breach event fires on the synthetic ceiling-trip from the previous section.
+
+### Self-documenting UI (verifies SKILL.md hover-explain rule)
+
+- [ ] Every non-obvious icon-only button on production routes has a `title` attribute (accessible fallback) and the `<Tooltip>` component on hover. Spot-check at least 5 elements: the bell icon header, the theme-toggle, admin-tab cells, status badges, settings.
+- [ ] `/settings` includes the global "Hide tooltips" toggle and it persists to `localStorage`.
+- [ ] No tooltip is the *only* explanation for a control — every tooltipped element also has a label or recognizable icon.
+
+### Content moderation (verifies sub-skill 05, when UGC platform)
+
+- [ ] If the platform has user-generated content: 3-layer moderation (OpenAI Moderation + public-domain patterns + bespoke checks) is wired at every UGC insert point.
+- [ ] At least 20 unit tests in `tests/unit/moderation.test.ts` cover representative content patterns (allowed criticism, blocked slurs, edge-case false positives).
+- [ ] Admin moderation queue at `/admin/moderation` (or wherever the agent placed it) works: agent can approve/reject; both states persist correctly.
+
+### Race + persona tests (verifies sub-skill 16 + SKILL.md operating rules)
+
+- [ ] `tests/e2e/race.spec.ts` exists and passes. At minimum: double-submit, slow-response, and (if webhooks exist) out-of-order tests.
+- [ ] `tests/e2e/personas/<slug>.spec.ts` exists for every persona in `PROJECT.md # Audience`. Each passes.
+
 ### Legal/social (only if relevant)
 
 - [ ] If you collect emails: a one-line privacy note exists ("we use your email to log you in; we don't share it").

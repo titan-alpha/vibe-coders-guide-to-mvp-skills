@@ -17,8 +17,8 @@ Goal: lock in a visual direction *before* writing UI components. Re-skinning lat
 1. Re-read `PROJECT.md`'s `# Idea` and `# Audience` and pick a tone label from this list: **editorial · tech · friendly · luxurious · playful · brutalist**.
 2. Pick the color scheme &mdash; informed by color-theory analysis (six dimensions, see Item #2 below), then propose 2 palettes, user picks.
 3. Pick the display font &mdash; from the curated list, matched to tone.
-4. Pick the logo (see item #9 below).
-5. Build the header with the up-to-5-element rule (see item #10 below).
+4. Pick the logo (see item #10 below).
+5. Build the header with the up-to-5-element rule (see item #11 below).
 6. Then everything else &mdash; type scale, spacing, components.
 
 Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 is mechanical; the agent just builds it.
@@ -30,7 +30,7 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
    The dark variant is not a recoloring of the light one — both must be palette-aware: pick swap-pairs so primary/accent stay readable against `base-100` in either mode (i.e., dark mode primary often needs +0.10 L; surface needs to drop from ~0.98 L to ~0.18 L). Re-run the WCAG AA contrast check on **both** variants — every text/background pair has to clear 4.5:1 in both.
 
-   **System preference is the default**; users get whatever their OS is set to. Wire the manual toggle in the header (see Item #10) so users can override per-session, persisted to `localStorage`. The toggle pattern:
+   **System preference is the default**; users get whatever their OS is set to. Wire the manual toggle in the header (see Item #11) so users can override per-session, persisted to `localStorage`. The toggle pattern:
 
    ```tsx
    // components/ThemeToggle.tsx
@@ -143,7 +143,56 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
    import { ArrowRight, Check, Copy } from 'lucide-react';
    <ArrowRight className="w-4 h-4" />
    ```
-4. **Type scale:** one **deliberately picked** display font + system-stack body font, at 56/40/28/20/**16**. **16px is the floor.** No body text, caption, label, or nav item smaller than 16px (`text-base`). The only allowed exceptions are technical metadata like timestamps, version numbers, or inline code badges &mdash; and even those should prefer 14px (`text-sm`) over smaller. Never ship `text-xs` for readable content. No more than two font weights.
+4. **Self-documenting via `<Tooltip>`.** Per the SKILL.md operating rule, every non-obvious interactive element gets a tooltip explaining what it does. Ship the component now in `components/Tooltip.tsx` so every later skill can wrap things with it.
+
+   ```tsx
+   'use client';
+   import { useState } from 'react';
+
+   export function Tooltip({ children, label, side = 'bottom' }: {
+     children: React.ReactNode;
+     label: string;
+     side?: 'top' | 'bottom' | 'left' | 'right';
+   }) {
+     const [open, setOpen] = useState(false);
+     // Respect the global "hide tooltips" setting (set in /settings).
+     if (typeof window !== 'undefined' && localStorage.getItem('tooltips') === 'off') {
+       return <span title={label}>{children}</span>;     // accessible fallback only
+     }
+     return (
+       <span className="relative inline-block"
+             onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
+             onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
+         <span title={label}>{children}</span>
+         {open && (
+           <span role="tooltip" className={`absolute z-50 px-2 py-1 rounded-md bg-base-200 border border-base-300/60 text-xs shadow-lg whitespace-nowrap pointer-events-none ${
+             side === 'top' ? 'bottom-full mb-1 left-1/2 -translate-x-1/2'
+             : side === 'left' ? 'right-full mr-1 top-1/2 -translate-y-1/2'
+             : side === 'right' ? 'left-full ml-1 top-1/2 -translate-y-1/2'
+             : 'top-full mt-1 left-1/2 -translate-x-1/2'
+           }`}>
+             {label}
+           </span>
+         )}
+       </span>
+     );
+   }
+   ```
+
+   Then add a "Hide tooltips" toggle in `/settings`:
+
+   ```tsx
+   // app/settings/page.tsx — extend with a tooltip-toggle
+   <label className="label cursor-pointer justify-start gap-2">
+     <input type="checkbox" defaultChecked={typeof window !== 'undefined' && localStorage.getItem('tooltips') !== 'off'}
+       onChange={(e) => localStorage.setItem('tooltips', e.target.checked ? 'on' : 'off')}
+       className="toggle toggle-primary" />
+     <span className="label-text">Show hover tooltips on icons + status badges</span>
+   </label>
+   ```
+
+   **Tooltips reinforce, never replace.** Labels and clear icons come first; tooltips add the *why* / *what happens*. If the agent finds itself wrapping a `<button>Save</button>` with a tooltip "Save your changes," cut the tooltip — the label is the explanation.
+5. **Type scale:** one **deliberately picked** display font + system-stack body font, at 56/40/28/20/**16**. **16px is the floor.** No body text, caption, label, or nav item smaller than 16px (`text-base`). The only allowed exceptions are technical metadata like timestamps, version numbers, or inline code badges &mdash; and even those should prefer 14px (`text-sm`) over smaller. Never ship `text-xs` for readable content. No more than two font weights.
 
    **Display font is a tone decision, not a default.** The agent picks based on the platform's emotional tone (audience, mood, vertical from sub-skill 01). Body font stays as the system stack. The picked display font goes in `globals.css` via `@font-face` from Google Fonts (weight subset only).
 
@@ -156,11 +205,11 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
    - **Brutalist / technical / raw** &mdash; JetBrains Mono or IBM Plex Mono used as display. Industrial.
 
    State the choice and reasoning to the user before applying. The user can override.
-5. **Text content is minimal wherever possible.** Cut every word that isn't earning its place. One-sentence descriptions beat paragraphs. Button labels are verbs (`Save`, `Send`, `Create`), not phrases. Headings are the shortest fragment that names the section. Use whitespace and hierarchy instead of prose to convey structure.
-6. **No gradients on buttons or titles.** Solid theme colors only. Gradient backgrounds on interactive elements or headings read as dated and reduce contrast predictability across themes. Gradients are fine for purely decorative background layers (hero glow, illustration accents) &mdash; not for anything the user reads or clicks.
-7. **Spacing:** stick to Tailwind's default scale &mdash; do not invent custom spacing values.
-8. **Component primitives:** build only what you need from DaisyUI (`btn`, `card`, `badge`, `input`, `alert`, `navbar`). Do not pre-build a component library.
-9. **Logo + favicon (same file).** Every product needs a simple mark. The logo you design *is* the favicon &mdash; one SVG, no variants.
+6. **Text content is minimal wherever possible.** Cut every word that isn't earning its place. One-sentence descriptions beat paragraphs. Button labels are verbs (`Save`, `Send`, `Create`), not phrases. Headings are the shortest fragment that names the section. Use whitespace and hierarchy instead of prose to convey structure.
+7. **No gradients on buttons or titles.** Solid theme colors only. Gradient backgrounds on interactive elements or headings read as dated and reduce contrast predictability across themes. Gradients are fine for purely decorative background layers (hero glow, illustration accents) &mdash; not for anything the user reads or clicks.
+8. **Spacing:** stick to Tailwind's default scale &mdash; do not invent custom spacing values.
+9. **Component primitives:** build only what you need from DaisyUI (`btn`, `card`, `badge`, `input`, `alert`, `navbar`). Do not pre-build a component library.
+10. **Logo + favicon (same file).** Every product needs a simple mark. The logo you design *is* the favicon &mdash; one SVG, no variants.
 
    **Design process:**
    1. **DIALOGUE:** ask the user one question: *"If I had to express what this project does in a single visual idea, what would it be? A letter, a shape, an object, or a metaphor?"* Re-read `PROJECT.md` for the audience and MVP slice before proposing.
@@ -191,7 +240,7 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
 
    **Non-goals at v1:** multiple sizes, animated logos, dark/light variants. One file. Ship.
 
-10. **Header and footer architecture &mdash; positioning, sizing, content rules.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Each has different positioning and a different scope of content. Both are non-negotiable architectural decisions, not aesthetic ones &mdash; **the agent enforces them across every page**.
+11. **Header and footer architecture &mdash; positioning, sizing, content rules.** Modern design theory separates the *working surface* (header) from the *reference surface* (footer). Each has different positioning and a different scope of content. Both are non-negotiable architectural decisions, not aesthetic ones &mdash; **the agent enforces them across every page**.
 
     ### Header
 
@@ -272,7 +321,7 @@ Items 2&ndash;4 are creative decisions; the user always sees and picks. Item 5 i
     }
     ```
 
-11. **One landing/home page first.** Ship a minimal, on-brand landing route before building any feature surface. This anchors the visual direction so everything after it inherits the same language.
+12. **One landing/home page first.** Ship a minimal, on-brand landing route before building any feature surface. This anchors the visual direction so everything after it inherits the same language.
 
 ## AUTONOMOUS — critical review of user flow
 
@@ -337,6 +386,110 @@ Produce a short doc &mdash; 5&ndash;10 bullets max &mdash; structured as:
 Share the critique. Ask: *"Want me to apply these now, or keep what's there and iterate after first users try it?"* Let them choose. An opinionated suggestion the user rejects is better than a silent compromise.
 
 Apply what's agreed. Keep rejected suggestions under `# Open questions` in `PROJECT.md` &mdash; they often come back after user testing.
+
+## AUTONOMOUS — brand voice (how the product speaks)
+
+Tone (sub-skill 02 DIALOGUE Q1) is the visual + emotional register: friendly, editorial, brutalist. **Voice** is something different: it's the actual word choices the product uses across every surface — buttons, error messages, empty states, marketing copy, transactional emails. Every product has one whether it's intentional or not. The agent makes it intentional.
+
+### Pick the voice axes
+
+Four sliders, each scored 1–5:
+
+- **Formal ↔ Casual** (1 = "We have received your application." | 5 = "Got it!")
+- **Spare ↔ Generous** (1 = "Saved." | 5 = "Saved! Your changes are live and we've kicked off the email — you're all set 🎉")
+- **Sincere ↔ Witty** (1 = "Account deactivated." | 5 = "Your account is sleeping. Wake it up anytime.")
+- **Authoritative ↔ Conversational** (1 = "Authentication required." | 5 = "Sign in real quick?")
+
+The agent reads the tone label + audience + product type and proposes scores. For example:
+
+- **Recipe app for casual home cooks**: Casual 4 / Spare 3 / Sincere 4 / Conversational 5.
+- **Dev tool for backend engineers**: Formal 2 / Spare 5 / Sincere 5 / Authoritative 4.
+- **Fintech for small-business owners**: Formal 3 / Spare 4 / Sincere 5 / Authoritative 4.
+
+Confirm with the user. The scores get committed to `STATE.yaml decisions.voice_axes` so every skill that writes user-facing text can reference them.
+
+### Voice rules — concrete words
+
+For each tone × voice combo, encode 3–5 specific rules as a writing guide. Examples:
+
+- **Use** active voice ("We saved your post"), not passive ("Your post has been saved").
+- **Use** "you" + "we"; avoid "users" (clinical) or "the system" (machine-like).
+- **Avoid** these specific words for *this* voice (e.g., "platform", "leverage", "synergy" for casual voices; "awesome", "🎉" for formal voices).
+- **Length cap** for body microcopy: 1 sentence in spare voices, 2 in generous.
+- **Punctuation**: exclamation points used sparingly (one max per page) in spare/formal voices; allowed in casual/generous.
+
+The agent writes these to `PROJECT.md # Voice` so every later copy decision can point at them.
+
+### Apply — copywriting templates the agent generates
+
+The agent uses the voice rules to write the user-facing strings the product needs. It does this **proactively**, presenting options for each, not waiting to be asked:
+
+- **Landing page**:
+  - Headline (8–12 words; states the value, not the feature).
+  - Sub-headline (one sentence; states the audience and the differentiator).
+  - Primary CTA button label (a verb phrase: "Save your first recipe", not "Get started").
+- **Auth pages**: sign-in / sign-up button labels, success toasts, error messages (per validation case: "We've used that email already" not "Email already exists").
+- **Empty states** for every list / dashboard / search-with-no-results — first impression for new users.
+- **Error pages**: 404, 500, "you've been deactivated", "rate limited".
+- **Transactional emails** (signup confirmation, password reset, invite, etc.) — voice-consistent with the product.
+- **Loading / pending states** ("Working on it…" vs "Loading…" vs "Crunching the numbers…").
+
+For each, propose 2–3 variants matching the voice axes and let the user pick. The configurator's `component_pick` and `multiple_choice` message types (sub-skill SKILL.md "Build channel protocol") are the right surface when in Path B.
+
+**Anti-patterns**:
+- **Using framework defaults.** "Welcome to Next.js" / generic 404 / "Loading…" are tells. Replace every default the user might see.
+- **Voice that doesn't match audience.** A children's-education product written in the voice of a dev tool is jarring. Read the audience back through the voice rules to sanity-check.
+- **Writing copy that the user can't pronounce.** If the founder reads the page out loud and stumbles, the voice is wrong. Read it out loud.
+
+## AUTONOMOUS — engineered activation (the first 60 seconds)
+
+Most MVPs lose users in the first 90 seconds, not at week 3. Activation is the path from "I just landed" or "I just signed up" to "oh, I get it." It's a separate concern from auth (which is just plumbing) — and the agent designs it explicitly.
+
+### 1. Define the "aha" moment
+
+Read `PROJECT.md`'s MVP slice + audience. The aha moment is the **single experience** that makes the user understand the value. Examples:
+
+- Recipe app: the user sees their first recipe rendered cleanly without a life-story intro. *(Aha: "this is what I came for.")*
+- Note-taking app: the user types and the note auto-saves with a visible indicator. *(Aha: "I don't have to think about saving.")*
+- Marketplace: the user sees 3 relevant listings on the homepage without filtering. *(Aha: "there's actually supply here.")*
+- AI tool: the user runs the AI on their own input and gets a useful result. *(Aha: "this works for my case.")*
+
+The agent proposes the aha for the user's product, then asks: *"Is this the moment that makes them get it? Or is there a different one?"*
+
+### 2. Time-to-value budget — under 60 seconds
+
+From landing to aha must take **under 60 seconds for a first-time user, including signup**. Anything longer and most people leave. This constrains everything downstream:
+
+- Signup is one screen, not three.
+- The first authed page is the aha-producing page, not a generic dashboard with empty states.
+- Optional fields (intended-use, profile photo, etc.) come AFTER the aha, not before.
+- Onboarding tours that block content are forbidden — they push aha further away.
+
+Test it: Playwright scripts a brand-new user from `/` to the aha screen and asserts wall-clock time < 60s on a slow-3G profile. The test lives in `tests/e2e/activation.spec.ts`.
+
+### 3. The four activation states the agent designs
+
+For every product:
+
+| State | What the user sees | What the agent designs |
+| --- | --- | --- |
+| **Cold landing** (no account) | Public landing page | Single primary CTA leading toward aha; secondary "see an example" link bypasses signup for browse-able products |
+| **Just signed up** (empty account) | Authed shell | First-action prompt, NOT empty dashboard. "Save your first recipe" / "Create your first note" / etc. — verb + concrete object |
+| **First action complete** (one record exists) | Aha state | The thing that makes them get it. May include a small "what's next" hint but doesn't force one. |
+| **Returning, day 2+** | Authed shell with content | Different from "just signed up" — usually shows the user's own most recent thing front-and-center. Reduces re-orientation cost. |
+
+Each state gets its own visual baseline screenshot (sub-skill 02 test rig + sub-skill 16 visual regression).
+
+### 4. Activation copy is the highest-leverage copy
+
+The empty-state copy on the just-signed-up screen is the single most-important sentence in the product. The agent writes it explicitly using the voice rules from "Brand voice" above — and tests 2 variants if possible (sub-skill 08 analytics will tell you which converts).
+
+### Exit criteria for activation
+
+- The aha moment is named in `PROJECT.md # Activation` and `STATE.yaml decisions.aha_moment`.
+- A Playwright test asserts time-to-aha < 60s for a brand-new user.
+- The four state-specific screens have visual baselines.
+- The "just signed up" empty-state copy is voice-consistent and verb-led.
 
 ## AUTONOMOUS — set up the test rig (do this BEFORE leaving 02)
 
@@ -538,6 +691,10 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - Building the dark variant by inverting the light one. Dark themes need their own L-curve adjustments; recoloring with negative-of-light produces low-contrast surfaces.
 - Defaulting to the system stack as the display font, or picking a color palette before the tone label is named. Tone first, then palette and font.
 - Picking colors by feel without checking contrast ratios or cultural connotations. The agent always proposes palettes that pre-pass WCAG AA &mdash; accessibility is a *constraint* on color choice, not a follow-up audit.
+- Shipping the framework's default empty / 404 / loading copy. These are dead giveaways and tank trust.
+- A voice that doesn't match the audience (children's education in dev-tool voice, fintech in playful-app voice). Read the audience back through the voice rules.
+- An activation flow longer than 60 seconds for a first-time user. Cut every step that doesn't earn its place.
+- Tooltips as the only way to understand a control. Labels + clear icons first; tooltips add reinforcement, not basic comprehension.
 
 ## Exit criteria
 
@@ -553,5 +710,9 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - The user-flow critique has been written, discussed with the user, and applied where agreed.
 - A `# Design` section in `PROJECT.md` captures the chosen tone label, color decisions, display font, logo concept, theme modes (light/dark/both), the core user journey sentence, and any flow-critique items deferred to post-MVP.
 - Test rig is scaffolded: Vitest (unit + integration), Playwright (e2e), axe-core, baseline screenshot dir under `tests/e2e/visual.spec.ts-snapshots/`. The three template tests (unit, integration, visual) exist and pass. `npm run test` runs the full suite. Visual baselines for the landing page in both light and dark are committed to git.
+- `<Tooltip>` component shipped in `components/Tooltip.tsx`; `/settings` has the global hide-tooltips toggle.
+- Voice axes scored (Formal/Casual, Spare/Generous, Sincere/Witty, Authoritative/Conversational) and recorded in `STATE.yaml decisions.voice_axes`.
+- Voice rules and word-list captured in `PROJECT.md # Voice`.
+- Aha moment named; time-to-aha < 60s asserted by `tests/e2e/activation.spec.ts`; the four activation-state screens have visual baselines.
 
 Move on to `03-compliance.md`.

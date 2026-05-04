@@ -31,6 +31,20 @@ Then, in the same exchange, ask about feedback collection:
 
 If the user opts out of feedback: skip the new tab AND the hamburger item AND the contextual prompts. Record in `STATE.yaml # Decisions`: "Feedback collection: skipped".
 
+Then, in the same exchange, ask about the cost-monitoring and alerts tabs:
+
+> *"Two more decisions while we're here:*
+>
+> *Want a **Cost Monitoring** tab? It calculates your projected monthly spend across services (OpenAI, Vercel, Resend, Stripe, Neon, etc.) based on actual usage × documented unit prices, and lets you set per-service ceilings. When you hit 80% of any ceiling, it pings you. Strongly recommended — surprise bills are real risks for founders.*
+>
+> *Want an **Alerts** tab? It's where production errors land. The agent wires Sentry-style error tracking + sends an email to your inbox (via Resend) for anything above 'warning' severity. The tab shows the dispatched-history so you can see what fired and when.*
+>
+> *Both, one, or neither?"*
+
+Skip-paths recorded in `STATE.yaml`:
+- `decisions.cost_monitoring_enabled: false` — skip Tab 7
+- `decisions.error_alerts_enabled: false` — skip Tab 8
+
 If the user declines the dashboard altogether, skip and move on to `08-monetization.md`. (For a project with auth, gently flag that without an admin dashboard they'll be running SQL by hand to manage users — they'll likely come back to this.)
 
 ## AUTONOMOUS — analyze the codebase
@@ -306,9 +320,9 @@ Once the change-password flow has succeeded, surface a one-line note in the chat
 
 For better UX (custom login form instead of the browser prompt), build `/admin/login` that POSTs the password to a Route Handler, which sets a signed `admin_session` cookie on success. Middleware then checks the cookie. This is a v1.5 upgrade — basic auth + the change-password flow are enough to ship.
 
-## AUTONOMOUS — build the dashboard with six tabs
+## AUTONOMOUS — build the dashboard with up to 8 tabs (subtract any the user opted out of)
 
-`/admin` has six tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**, **Feedback**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`. Skip Feedback the same way if feedback collection was declined.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
+`/admin` has up to 8 tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**, **Feedback**, **Cost**, **Alerts**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`. Skip Feedback the same way if feedback collection was declined. Skip Cost if `decisions.cost_monitoring_enabled` is false. Skip Alerts if `decisions.error_alerts_enabled` is false.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
 
 ```tsx
 // app/admin/layout.tsx
@@ -327,6 +341,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <Link href="/admin/usage"         className="tab">Usage</Link>
         <Link href="/admin/notifications" className="tab">Notifications</Link>
         <Link href="/admin/feedback"      className="tab">Feedback</Link>
+        <Link href="/admin/cost"          className="tab">Cost</Link>
+        <Link href="/admin/alerts"        className="tab">Alerts</Link>
       </nav>
       {children}
     </main>
@@ -970,6 +986,328 @@ Add a "Feedback" link to the hamburger menu (defined in 02-design item #10). The
 {feedbackOpen && <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />}
 ```
 
+### Tab 7 — Cost Monitoring
+
+The founder needs full awareness of and control over service costs. Surprise bills are an existential MVP risk — a viral mention plus uncapped LLM costs equals a $5,000 wake-up call. The Cost tab makes spend visible and ceilings enforceable.
+
+**Schema additions** to `lib/db/schema.ts`:
+
+```ts
+// Documented unit costs per service. Seeded by the agent at setup with
+// current published prices; user can override in the UI when they have a
+// negotiated rate.
+export const serviceUnitCosts = pgTable('service_unit_costs', {
+  service: text('service').primaryKey(),       // 'openai_gpt5_nano' | 'resend_email' | 'vercel_function_invocation' | 'stripe_processing_fee' | 'neon_compute_hour' | ...
+  unit_label: text('unit_label').notNull(),    // 'per 1k input tokens', 'per email', 'per invocation', 'per $1 charged', 'per compute-hour'
+  unit_cost_usd: numeric('unit_cost_usd', { precision: 12, scale: 8 }).notNull(),
+  source: text('source'),                      // 'OpenAI pricing page 2026-04-01' — the agent records when prices were last verified
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Aggregated usage per service, per day. Updated nightly from underlying
+// event tables (user_actions, request_metrics, ai_cache misses, etc.).
+export const serviceUsageDaily = pgTable('service_usage_daily', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  service: text('service').notNull(),
+  day: date('day').notNull(),
+  units: numeric('units', { precision: 18, scale: 4 }).notNull(),    // tokens / emails / invocations / dollars-charged / compute-hours
+  cost_usd: numeric('cost_usd', { precision: 12, scale: 4 }).notNull(),
+}, (t) => ({ uniq: unique().on(t.service, t.day) }));
+
+// User-set per-service monthly ceilings. Read from STATE.yaml at first run,
+// editable in the Cost tab afterwards.
+export const serviceCeilings = pgTable('service_ceilings', {
+  service: text('service').primaryKey(),
+  monthly_cap_usd: numeric('monthly_cap_usd', { precision: 12, scale: 2 }).notNull(),
+  alert_at_pct: integer('alert_at_pct').notNull().default(80),    // alert when this fraction of the cap is hit
+  hard_block: boolean('hard_block').notNull().default(false),     // true = stop calling the service when cap hit; false = alert only
+});
+```
+
+**Daily aggregator** (cron job at 02:00 UTC, sub-skill 14 wires the schedule):
+
+```ts
+// app/api/internal/cron/cost-rollup/route.ts
+import { db } from '@/lib/db';
+import { userActions, requestMetrics, aiCache, serviceUsageDaily, serviceUnitCosts } from '@/lib/db/schema';
+import { sql } from 'drizzle-orm';
+
+export async function GET(req: Request) {
+  if (req.headers.get('x-cron-secret') !== process.env.CRON_SECRET) return new Response('forbidden', { status: 403 });
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  // Aggregate per service. Each service has its own SQL — examples:
+  await db.execute(sql`
+    insert into service_usage_daily (service, day, units, cost_usd)
+    select 'openai_gpt5_nano', date_trunc('day', created_at)::date,
+      sum((properties->>'tokens')::numeric),
+      sum((properties->>'tokens')::numeric / 1000) * (select unit_cost_usd from service_unit_costs where service = 'openai_gpt5_nano')
+    from user_actions
+    where event = 'ai.call' and date_trunc('day', created_at)::date = ${yesterday}
+    group by 2
+    on conflict (service, day) do update set units = excluded.units, cost_usd = excluded.cost_usd
+  `);
+  // Resend emails, Vercel function invocations, Stripe fees, Neon compute hours similar.
+
+  // After rollup, check ceilings — if month-to-date >= alert_at_pct of monthly_cap, fire an alert.
+  await checkCeilingsAndAlert();
+  return Response.json({ ok: true });
+}
+```
+
+**Tab UI** (`app/admin/cost/page.tsx`):
+
+```tsx
+import { db } from '@/lib/db';
+import { serviceUsageDaily, serviceCeilings, serviceUnitCosts } from '@/lib/db/schema';
+import { setCeilingAction } from './actions';
+import { sql } from 'drizzle-orm';
+
+export default async function CostTab() {
+  const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
+  const mtd = await db.execute(sql`
+    select service,
+      sum(units) as units,
+      sum(cost_usd) as cost_usd
+    from service_usage_daily
+    where day >= ${monthStart.toISOString().slice(0, 10)}
+    group by service
+    order by cost_usd desc
+  `);
+  const ceilings = await db.select().from(serviceCeilings);
+  const ceilingByService = Object.fromEntries(ceilings.map(c => [c.service, c]));
+
+  return (
+    <section className="space-y-6">
+      <div className="stats">
+        <div className="stat">
+          <div className="stat-title">Month-to-date spend</div>
+          <div className="stat-value">${Number(mtd.reduce((acc, r) => acc + Number(r.cost_usd ?? 0), 0)).toFixed(2)}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-title">Projected monthly</div>
+          <div className="stat-value">${projectMonthly(mtd).toFixed(2)}</div>
+          <div className="stat-desc opacity-70">Linear projection from current pace</div>
+        </div>
+      </div>
+
+      <table className="table">
+        <thead><tr><th>Service</th><th>Units this month</th><th>Spend</th><th>Ceiling</th><th>% used</th><th>Set ceiling</th></tr></thead>
+        <tbody>
+          {mtd.map(row => {
+            const c = ceilingByService[row.service];
+            const cap = c ? Number(c.monthly_cap_usd) : null;
+            const pct = cap ? (Number(row.cost_usd) / cap) * 100 : null;
+            const overAlert = pct !== null && pct >= (c?.alert_at_pct ?? 80);
+            return (
+              <tr key={row.service} className={overAlert ? 'bg-warning/10' : ''}>
+                <td>{row.service}</td>
+                <td>{Number(row.units).toLocaleString()}</td>
+                <td>${Number(row.cost_usd).toFixed(2)}</td>
+                <td>{cap ? `$${cap.toFixed(2)}` : <span className="opacity-40">no cap</span>}</td>
+                <td>{pct !== null ? `${pct.toFixed(0)}%` : '—'}</td>
+                <td>
+                  <form action={setCeilingAction} className="inline">
+                    <input type="hidden" name="service" value={row.service} />
+                    <input type="number" name="monthly_cap_usd" step={1} min={0} defaultValue={cap ?? ''} className="input input-bordered input-xs w-20" placeholder="0" />
+                    <button className="btn btn-xs ml-1">Save</button>
+                  </form>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <details className="text-xs opacity-70">
+        <summary>Unit prices (verified by the agent at setup; edit if you have a negotiated rate)</summary>
+        <ul className="mt-2 ml-4 list-disc">
+          {(await db.select().from(serviceUnitCosts)).map(p => (
+            <li key={p.service}>{p.service} — ${Number(p.unit_cost_usd).toFixed(8)} {p.unit_label} (verified {p.source ?? 'unknown'})</li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function projectMonthly(mtd: { cost_usd: number | string }[]): number {
+  const total = mtd.reduce((acc, r) => acc + Number(r.cost_usd ?? 0), 0);
+  const today = new Date().getUTCDate();
+  const daysInMonth = new Date(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 0).getUTCDate();
+  return (total / today) * daysInMonth;
+}
+```
+
+**Hard-block enforcement**: when `serviceCeilings.hard_block` is true and month-to-date cost ≥ ceiling, the relevant call site refuses to call the upstream service. Per service:
+
+- OpenAI: `cachedAiCall` (sub-skill 05) checks ceiling first; throws `BudgetExhausted` if at cap.
+- Resend / SendGrid: `sendEmail` (sub-skill 04) throws if at cap. Critical-class transactional emails (password reset) bypass the cap with a logged warning; lifecycle emails respect the cap.
+- Stripe: not directly cappable, but a high `stripe_processing` projection means the founder is taking lots of revenue (good problem). The cap here is mostly informational.
+
+**Anti-patterns**:
+- Setting cost ceilings only in dev. **Production env vars must include** `*_MONTHLY_CAP_USD` for every external service that costs money.
+- Forgetting to seed `service_unit_costs`. The agent verifies all current prices on the relevant pricing pages at setup and again whenever the user explicitly asks.
+- Hard-blocking transactional email at the cap. Password reset email failing because of a budget cap is worse than the budget overage. Critical email bypasses; lifecycle respects.
+
+### Tab 8 — Alerts
+
+The Alerts tab is where production errors and ceiling-breach events land. The agent wires error capture (Sentry or self-hosted equivalent) and dispatch to the founder's email via Resend.
+
+**Schema additions** to `lib/db/schema.ts`:
+
+```ts
+export const alertEvents = pgTable('alert_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  level: text('level').notNull(),                      // 'info' | 'warn' | 'error' | 'critical'
+  source: text('source').notNull(),                    // 'sentry' | 'cost_ceiling' | 'health_check' | 'manual'
+  title: text('title').notNull(),                      // short description
+  body: text('body').notNull(),                        // markdown allowed; full context
+  context: jsonb('context'),                           // structured payload (route, user_id if relevant, stack trace)
+  status: text('status').notNull().default('new'),     // 'new' | 'acknowledged' | 'resolved'
+  dispatched_to: text('dispatched_to'),                // email address email was sent to (or null)
+  dispatched_at: timestamp('dispatched_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  acknowledgedAt: timestamp('acknowledged_at'),
+  resolvedAt: timestamp('resolved_at'),
+});
+```
+
+**Email dispatch** — fires when an event is created at level `warn`+ AND `STATE.yaml decisions.error_alerts_enabled === true` AND email service is configured (sub-skill 04):
+
+```ts
+// lib/alerts.ts
+import 'server-only';
+import { db } from '@/lib/db';
+import { alertEvents } from '@/lib/db/schema';
+import { sendEmail, emailEnabled } from '@/lib/email';
+
+const ALERT_RECIPIENT = process.env.ALERT_EMAIL_RECIPIENT ?? '';   // founder's email, set at setup
+const FREQUENCY_CAP_MINUTES = 15;                                  // don't email for the same source+title more than once per 15min
+
+export async function alert(args: {
+  level: 'info' | 'warn' | 'error' | 'critical';
+  source: string;
+  title: string;
+  body: string;
+  context?: Record<string, unknown>;
+}) {
+  const [row] = await db.insert(alertEvents).values({
+    level: args.level, source: args.source, title: args.title, body: args.body, context: args.context,
+  }).returning();
+
+  if (args.level === 'info') return;                     // info doesn't trigger email
+  if (!emailEnabled || !ALERT_RECIPIENT) return;
+  // Frequency-cap: skip if we already emailed this source+title in the last N minutes.
+  const recent = await db.execute(sql`
+    select 1 from alert_events
+    where source = ${args.source} and title = ${args.title}
+    and dispatched_at > now() - interval '${FREQUENCY_CAP_MINUTES} minutes'
+    limit 1
+  `);
+  if (recent.length) return;
+
+  await sendEmail({
+    to: ALERT_RECIPIENT,
+    subject: `[${args.level.toUpperCase()}] ${args.title}`,
+    html: `<h2>${args.title}</h2><p>${args.body}</p><pre style="background:#f4f4f5;padding:12px;border-radius:6px">${JSON.stringify(args.context ?? {}, null, 2)}</pre><p><a href="${process.env.AUTH_URL}/admin/alerts">View in admin</a></p>`,
+  }).catch(() => {});
+
+  await db.update(alertEvents).set({ dispatched_to: ALERT_RECIPIENT, dispatched_at: new Date() })
+    .where(eq(alertEvents.id, row.id));
+}
+```
+
+**Sources of alerts** — wired from these places:
+
+- Unhandled errors in any Route Handler (already captured by `withMetrics` from sub-skill 08; extend it to call `alert()` when `status >= 500`).
+- Cost-ceiling breaches (cost rollup cron — see Tab 7).
+- Health check failures (synthetic probe of `/api/health` from a Vercel Cron every 5 min).
+- Webhook delivery failures (Stripe / Resend webhook handlers post `error` alerts when their internal handler throws).
+- Manual `alert()` calls from anywhere the agent decides matters.
+
+**Sentry integration (optional, recommended)** — for richer client-side error capture (uncaught React errors, source-mapped stack traces, breadcrumbs). When configured (env: `SENTRY_DSN`), the agent wires `@sentry/nextjs` and forwards Sentry's high-severity events into the same `alertEvents` table via Sentry webhook to `/api/internal/sentry-webhook`.
+
+**Tab UI** (`app/admin/alerts/page.tsx`):
+
+```tsx
+import { db } from '@/lib/db';
+import { alertEvents } from '@/lib/db/schema';
+import { eq, desc, and, ilike } from 'drizzle-orm';
+import { ackAction, resolveAction, testAlertAction } from './actions';
+
+export default async function AlertsTab({ searchParams }: { searchParams: { level?: string; status?: string } }) {
+  const conds = [];
+  if (searchParams.level) conds.push(eq(alertEvents.level, searchParams.level));
+  if (searchParams.status) conds.push(eq(alertEvents.status, searchParams.status));
+  const rows = await db.select().from(alertEvents)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(alertEvents.createdAt))
+    .limit(200);
+
+  return (
+    <section className="space-y-4">
+      <header className="flex items-center justify-between flex-wrap gap-2">
+        <form className="flex gap-2 items-end">
+          <select name="level" defaultValue={searchParams.level ?? ''} className="select select-bordered select-sm">
+            <option value="">All levels</option>
+            {['info', 'warn', 'error', 'critical'].map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select name="status" defaultValue={searchParams.status ?? ''} className="select select-bordered select-sm">
+            <option value="">All statuses</option>
+            {['new', 'acknowledged', 'resolved'].map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button className="btn btn-sm">Filter</button>
+        </form>
+        <form action={testAlertAction}>
+          <button className="btn btn-sm btn-ghost border border-base-300/60">Send test alert</button>
+        </form>
+      </header>
+
+      <ul className="space-y-2">
+        {rows.map(r => (
+          <li key={r.id} className={`p-4 rounded-lg border ${r.status === 'new' ? 'border-warning/40 bg-warning/5' : 'border-base-300/60'}`}>
+            <div className="flex items-baseline justify-between">
+              <div>
+                <span className={`badge badge-sm mr-2 ${r.level === 'critical' ? 'badge-error' : r.level === 'error' ? 'badge-error opacity-80' : r.level === 'warn' ? 'badge-warning' : 'badge-info'}`}>{r.level}</span>
+                <span className="opacity-70 text-xs mr-2">{r.source}</span>
+                <strong>{r.title}</strong>
+              </div>
+              <span className="text-xs opacity-60">{r.createdAt.toISOString().slice(0, 16).replace('T', ' ')}</span>
+            </div>
+            <p className="mt-2 text-sm opacity-80 whitespace-pre-wrap">{r.body}</p>
+            {r.context && <pre className="mt-2 text-xs bg-base-200 p-2 rounded overflow-x-auto">{JSON.stringify(r.context, null, 2)}</pre>}
+            <footer className="mt-3 flex gap-2 items-center text-xs opacity-70">
+              {r.dispatched_to && <span>📧 sent to {r.dispatched_to} at {r.dispatched_at?.toISOString().slice(11, 16)}</span>}
+              <div className="ml-auto flex gap-1">
+                <form action={ackAction} className="inline">
+                  <input type="hidden" name="id" value={r.id} />
+                  <button className={`btn btn-xs ${r.status === 'acknowledged' ? 'btn-primary' : 'btn-ghost border border-base-300/50'}`} disabled={r.status !== 'new'}>Ack</button>
+                </form>
+                <form action={resolveAction} className="inline">
+                  <input type="hidden" name="id" value={r.id} />
+                  <button className={`btn btn-xs ${r.status === 'resolved' ? 'btn-success' : 'btn-ghost border border-base-300/50'}`}>Resolve</button>
+                </form>
+              </div>
+            </footer>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+**Frequency-capping**: the dispatcher above caps email sends to once per `(source, title)` per 15 minutes. Without this, a tight loop of errors would email the founder hundreds of times. The DB still records every event; only the email is rate-limited.
+
+**Test alert button** — fires a synthetic event so the founder can verify their email gets delivered before relying on the system.
+
+**Anti-patterns**:
+- Alerting on every `info` and `warn`. The founder will start ignoring the inbox. Default to `error`+ for email; `warn` shows in the tab without email.
+- No frequency cap. A 100-rps error spike emails the founder 100x/sec.
+- Alerts that don't link to the admin tab. The email should always include a link to `/admin/alerts` for context.
+- Storing the user's email PII in the alert body. Logs PII rules from sub-skill 11 still apply — redact via the same scrubber.
+
 ## Hand-off to the header bell icon (sub-skill 02)
 
 The bell icon lives in the global header rule defined by sub-skill 02 (design). This admin sub-skill owns the data layer and the API contract; sub-skill 02 owns the front-end rendering of the bell, the dropdown, and the unread badge.
@@ -1079,7 +1417,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 
 - `ADMIN_PASSWORD_BOOTSTRAP` was generated, shown once, and used for the first login; the user has since changed it via `/admin/change-password` and the persistent bcrypt hash is stored in `admin_settings.password_hash`. `INITIAL_USAGE_GRANT` is in `.env.local` (and Vercel env after deploy), gitignored.
 - Visiting `/admin` without credentials returns 401.
-- Visiting `/admin` with the correct password renders the six-tab dashboard (subtract a tab for each of Notifications and Feedback that were skipped).
+- Visiting `/admin` with the correct password renders the up to 8-tab dashboard (subtract any skipped: Notifications / Feedback / Cost / Alerts).
 - **Overview** renders 4–6 KPIs with real data.
 - **Users** lists users; Add User works (sends invite if email is configured, whitelists otherwise); Grant +N works; Deactivate / Reactivate works.
 - **Waitlist** lists pending entries; Approve moves the email to `allowedEmails` (and sends an invite if email is configured); Reject works.
@@ -1090,6 +1428,8 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 - `STATE.yaml # Decisions` records whether notifications are enabled (so sub-skill 02 knows whether to render the bell).
 - Feedback collection is wired (or explicitly skipped, recorded in `STATE.yaml`).
 - If wired: `feedback` schema exists; `/admin/feedback` tab works (search, filter by status, mark seen/resolved/wontfix); `/api/feedback` endpoint accepts submissions, rate-limited; hamburger menu has the Feedback item; agreed contextual prompts are placed at the surfaces decided with the user; `feedback_surfaces` list is in `STATE.yaml # Decisions`.
+- Cost Monitoring tab works (enabled or explicitly skipped). If enabled: `serviceUnitCosts` seeded with verified prices, daily rollup cron runs, ceilings settable per-service in the UI, hard-block respected on at-capacity calls.
+- Alerts tab works (enabled or explicitly skipped). If enabled: `alert()` is wired into Route Handler errors (via `withMetrics` extension), webhook handler errors, cost ceiling breaches, and health checks. Email dispatch fires for `error`+ levels through Resend (or SendGrid). Frequency-capped at once per 15 min per `(source, title)`. Test alert button verified end-to-end before exit.
 - Any new instrumentation is documented under `# Decisions` in `PROJECT.md`.
 
 Move on to `08-analytics.md` (or skip to `09-monetization.md` if analytics aren't in scope for this mode).

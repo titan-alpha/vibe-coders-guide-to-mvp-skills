@@ -257,6 +257,119 @@ Three layers, applied per data class:
 
 **For HIPAA / GLBA / SOC 2 projects**: envelope encryption with a customer-key-management-service (KMS) — AWS KMS, GCP Cloud KMS, HashiCorp Vault — becomes mandatory. The agent flags this in 03-compliance and ships the KMS integration here in 11.
 
+### Cost ceilings at the platform level (defense in depth)
+
+Sub-skill 07 wired in-app ceilings that throw `BudgetExhausted` when monthly caps are hit. That's the agent-controlled layer. **The platform itself also offers cost-cap controls** at the account level — and those are the ultimate backstop. Configure both; if either fires, the founder is protected from a runaway bill.
+
+| Service | Where to set the platform-level cap | Behavior at cap |
+| --- | --- | --- |
+| **OpenAI** | Dashboard → Billing → Usage limits → Hard limit + Soft limit | Hard limit refuses API calls; soft limit emails the account holder. Set hard limit to ~3× the in-app ceiling so the in-app one trips first; the hard limit is the catastrophe stopper. |
+| **Vercel** | Dashboard → Settings → Billing → Spend Management → Set monthly budget | Hard cap pauses the project at the cap (Hobby/Pro). Pause behavior matters: the user's site goes dark — usually preferable to a $5K bill, but the founder needs to know this is the trade. |
+| **Resend** | Dashboard → Settings → Limits — set daily / monthly send limits | Refuses sends past the cap. Critical: align with the in-app cap so transactional email keeps flowing while marketing email caps out. |
+| **Stripe** | No spend cap (you receive money, not pay it). But: rate limits + radar rules to prevent fraud-driven processing fee runaway. |
+| **Neon / Supabase / Vercel Postgres** | Dashboard → Compute autoscaling settings — set max compute size + max storage | Limits scale-up under load; can refuse new connections if hit. |
+| **Sentry** | Dashboard → Stats → Spike Protection (on by default for free tier) | Drops events past the burst threshold; better than burning quota in 5 minutes during an error storm. |
+| **Anthropic / Claude API** | Dashboard → Limits → Set monthly cap | Hard cap, similar to OpenAI's. |
+
+The agent walks the user through setting each — typically by sending them a one-click link to the right dashboard page and waiting for confirmation. Each cap is recorded in `STATE.yaml`:
+
+```yaml
+decisions:
+  platform_cost_caps:
+    openai:
+      hard_limit_usd: 200       # 3× the in-app cap
+      soft_limit_usd: 100       # email alert
+      configured_at: "2026-05-04"
+    vercel:
+      monthly_budget_usd: 50
+      pause_on_cap: true
+      configured_at: "2026-05-04"
+    # ... etc.
+```
+
+**The agent flags before launch** (sub-skill 17 ship checklist verifies): every external service that bills usage-based has BOTH an in-app ceiling AND a platform-level cap. Without both, a bug or viral spike can drain the account.
+
+### Disaster preparedness — backups, runbook, status page
+
+Pre-launch, the agent ships a basic disaster-recovery posture so the founder isn't improvising at 2 AM when production goes down.
+
+#### Database backups — verify they exist; verify they restore
+
+Most managed Postgres providers do daily backups by default. The agent **verifies** for the chosen provider and writes the verification to `PROJECT.md`:
+
+| Provider | Default | Retention | Verification command |
+| --- | --- | --- | --- |
+| **Neon** | Continuous (point-in-time recovery) | 7 days (Free), 14 days (Launch), 30 days (Scale) | Console → Branches → Restore: confirm "Restore" option exists |
+| **Supabase** | Daily | 7 days (Free), 14+ (paid) | Console → Database → Backups |
+| **Vercel Postgres** | Daily | 7 days (Hobby), 30 days (Pro) | Console → Storage → Backups |
+| **Self-managed RDS / Cloud SQL** | Configurable | Whatever the founder set | Take a manual snapshot now: `aws rds create-db-snapshot ...` |
+
+**Verify recovery actually works** before relying on it. The agent does a one-time test:
+
+1. In a non-production database (a Neon dev branch, a Supabase dev project, or a duplicated RDS instance), restore the latest backup.
+2. Run `npm run test:integration` against the restored copy.
+3. If tests pass, recovery works. Document the procedure in the runbook.
+4. If tests fail, fix backup config before launch.
+
+#### Runbook — one page, written by the agent
+
+`docs/runbook.md` covers the small set of foreseeable incidents. The agent generates it tailored to the actual stack:
+
+```markdown
+# Runbook
+
+## Production is down (returning 5xx everywhere)
+1. Check `https://<status-page-url>` — has the agent posted an incident?
+2. Check Vercel Dashboard → Deployments → latest. If a recent deploy is the cause:
+   `vercel rollback` (or in the dashboard, "Promote previous deployment").
+3. Check the platform's own status page: status.vercel.com / status.openai.com / status.resend.com / etc.
+4. Check `/admin/alerts` for what fired.
+
+## Database is down or slow
+1. Provider status page (status.neon.tech / status.supabase.com / etc.).
+2. Connection pool saturated? Check the provider dashboard for connection count vs limit.
+3. Long-running query? `SELECT pid, age(clock_timestamp(), query_start), query FROM pg_stat_activity WHERE state != 'idle' ORDER BY 2 DESC LIMIT 5;`
+4. If saturation: temporarily raise the pool limit, kill long queries, deploy a fix.
+
+## I leaked a secret
+1. Rotate the leaked credential **immediately** at the issuing service (OpenAI / Resend / Stripe / Auth.js / etc.).
+2. Update the new secret in `.env.local` AND in Vercel env (Production + Preview + Development).
+3. Redeploy.
+4. Audit recent activity on that service for unauthorized use.
+5. If the leak was in a git commit, rewrite history with `git filter-repo` or accept that it's published and rely on (1).
+
+## I deleted production data
+1. Check provider's point-in-time recovery — Neon supports up to 7 days; restore a branch from before the deletion.
+2. If unrecoverable: communicate to users via status page + email. Honesty over silence.
+
+## Cost ceiling tripped, service degraded
+1. Check `/admin/cost` for which service hit the cap.
+2. If legitimate growth: raise the cap (in-app + platform) and redeploy / refresh.
+3. If runaway: identify the source via `/admin/usage` or `/admin/analytics`, fix the bug or rate-limit, then raise.
+```
+
+The agent **commits this runbook** at sub-skill 14 deploy time and references it in `STATE.yaml`'s `# Decisions`. The user reads it once before launch so they're not learning the layout during an incident.
+
+#### Status page — minimum viable
+
+A `/status` route that's not gated by auth, returns plain HTML, and the founder can update without a deploy. Three variants depending on how invested the user is:
+
+- **Lowest-effort**: `/status` is a static page that says "All systems normal." The founder edits it in the deploy and pushes when there's an incident. Adequate for an MVP with < 100 users.
+- **Better**: `/status` reads from a `status_messages` table in the same DB; the founder updates it via `/admin/status` (a tiny admin page). Updates are instant, no deploy needed.
+- **Best**: third-party (BetterStack / Statuspage.io / Instatus). Higher cost and external surface but built-in incident timeline. Worth it past 1000 users.
+
+The agent ships option 1 by default at MVP scale and surfaces options 2-3 as "post-MVP if you grow."
+
+#### Backup verification before launch
+
+The agent runs through these manually before declaring ready-to-ship:
+
+- [ ] DB backup retention configured and visible in the provider console.
+- [ ] One-time restore test passed (`npm run test:integration` against restored copy).
+- [ ] `docs/runbook.md` is committed and referenced from `README.md`.
+- [ ] `/status` route exists and returns 200 from public traffic.
+- [ ] Founder has the runbook URL bookmarked.
+
 ### Structured logging (implementing the SKILL.md logging rule)
 
 SKILL.md's logging discipline rule covers the WHAT and WHY. This section ships the HOW.
@@ -409,5 +522,8 @@ If you found anything you couldn't fix in this pass, list it under `# Open quest
 - `lib/log.ts` exists; no raw `console.log` calls remain in `app/`, `lib/`, or `pages/` (run `grep -r 'console\.log' app lib pages 2>/dev/null` to verify).
 - Production `LOG_LEVEL` is `info` or `warn`. No `debug` level in Vercel env vars.
 - A `# Security` line in `PROJECT.md` records the audit date and any deferred items.
+- Platform-level cost caps configured for every billing-meter service (OpenAI, Vercel, Resend, Neon, Sentry as relevant). Recorded in `STATE.yaml decisions.platform_cost_caps`. Defense-in-depth alongside in-app ceilings from sub-skill 07.
+- DB backup retention verified; one-time restore test passed.
+- `docs/runbook.md` committed; `/status` route returns 200.
 
 Move on to `12-performance.md`.

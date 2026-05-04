@@ -150,56 +150,207 @@ Build the smallest UI that exposes the feature. Show a loading state. On error, 
 - For features users could spam, require auth.
 - Log token counts and model used. Even a single line per call helps the founder watch spend.
 
-## Content moderation (community-based products only)
+## AUTONOMOUS — cache identical AI requests (cheap retention lever)
 
-If users can post content that other users see &mdash; comments, posts, profile bios, messages, reviews, anything user-generated that's publicly readable &mdash; wire **OpenAI's moderation API** to filter harmful content automatically. It's **free** (no per-call cost), uses your existing `OPENAI_API_KEY`, and catches the well-known categories: hate, harassment, self-harm, sexual, violence, illicit.
+Many AI features are called repeatedly with the same input. A user re-running the same recipe-generator prompt; multiple users asking the chatbot the same FAQ. Caching the response saves real money and improves perceived latency from ~1s to ~30ms.
 
-### When to add it
+### When to cache
 
-DIALOGUE: *"Does your product let users post content that other users will see (comments, messages, profiles, posts, etc.)?"* If yes, wire it. If no, skip.
+| Pattern | Cache? |
+| --- | --- |
+| Same prompt + same model + same schema → deterministic-ish answer (extraction, classification, structured generation with low creativity) | **Yes**, with a TTL of 7-30 days |
+| User-personalized prompt (includes user ID, account context) | **No** by default; cache only if the personalization is part of the cache key |
+| Creative-by-design (write me a poem, generate an image) | **No** — repeated requests are SUPPOSED to vary |
+| Chatbot Q&A on a stable knowledge base | **Yes** — the most common high-value cache target |
+| Real-time data (summarize the last hour of events) | **No** |
 
-### Helper
+The agent looks at each `aiCall` site and decides per-site. Cached calls are wrapped via a `cachedAiCall` helper:
+
+```ts
+// lib/ai-cache.ts
+import 'server-only';
+import { createHash } from 'node:crypto';
+import { db } from '@/lib/db';
+import { aiCache } from '@/lib/db/schema';
+import { eq, and, gt } from 'drizzle-orm';
+import { aiCall } from '@/lib/ai';
+import type { z } from 'zod';
+
+export async function cachedAiCall<S extends z.ZodTypeAny>(args: Parameters<typeof aiCall<S>>[0] & {
+  ttl_days?: number;          // default 14
+}): Promise<z.infer<S>> {
+  const ttl = (args.ttl_days ?? 14) * 24 * 60 * 60 * 1000;
+  const key = createHash('sha256').update(JSON.stringify({
+    model: args.model ?? 'gpt-5-nano',
+    effort: args.effort ?? 'minimal',
+    instructions: args.instructions,
+    input: args.input,
+    schemaName: args.schemaName,
+  })).digest('hex');
+
+  const since = new Date(Date.now() - ttl);
+  const [hit] = await db.select().from(aiCache)
+    .where(and(eq(aiCache.cacheKey, key), gt(aiCache.createdAt, since)));
+  if (hit) {
+    // Bump hit_count async; don't block the read path.
+    db.update(aiCache).set({ hitCount: (hit.hitCount ?? 0) + 1, lastHitAt: new Date() })
+      .where(eq(aiCache.cacheKey, key)).catch(() => {});
+    return hit.response as z.infer<S>;
+  }
+
+  const response = await aiCall(args);
+  db.insert(aiCache).values({
+    cacheKey: key, model: args.model ?? 'gpt-5-nano', schemaName: args.schemaName,
+    response, hitCount: 0, createdAt: new Date(),
+  }).onConflictDoNothing().catch(() => {});
+  return response;
+}
+```
+
+Schema:
+
+```ts
+// lib/db/schema.ts (extend)
+export const aiCache = pgTable('ai_cache', {
+  cacheKey: text('cache_key').primaryKey(),       // sha256 of normalized request
+  model: text('model').notNull(),
+  schemaName: text('schema_name').notNull(),
+  response: jsonb('response').notNull(),           // the parsed Zod output
+  hitCount: integer('hit_count').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  lastHitAt: timestamp('last_hit_at'),
+});
+```
+
+A daily cron deletes entries older than the longest TTL configured (default 30 days) so the table doesn't grow unbounded.
+
+**Sub-skill 08 analytics** surfaces cache hit rate per `aiCall` site so the founder can see which prompts are repetitive enough to cache vs. which churn through unique inputs. A cache hit rate < 5% means the cache is overhead with no benefit; > 30% is paying its rent.
+
+**Anti-patterns**:
+- **Caching personalized prompts without including the user ID in the key.** You'll serve user A's response to user B. Never include `userId` in the system prompt without including it in the cache key.
+- **Caching creative outputs.** "Generate a tagline" should produce variety; cache subverts the use case.
+- **Forever-TTL caches.** The model behind the prompt evolves; outputs that are right today might be stale in 6 months. Set a finite TTL (default 14 days).
+
+## AUTONOMOUS — content moderation (when the platform has user-generated content)
+
+Any product that lets users post text, images, or content that other users see needs moderation from day one. Skipping it ships a platform that can be weaponized — and discovering this post-launch is much more expensive than building it in.
+
+The agent **proactively asks**: *"Does the platform let users post content that other users (or the public) will see? Comments, posts, profiles, listings, AI-generated content?"* If yes, this section is required. If no (e.g., a single-user productivity tool), skip with a one-line `STATE.yaml` note.
+
+### Three layers — apply in order, free → cheap → custom
+
+**Layer 1: OpenAI's free Moderation API** (text + image classification, no cost)
+
+Hits the `/v1/moderations` endpoint with the user's content, gets back per-category scores (`harassment`, `sexual`, `hate`, `violence`, `self-harm`, etc.). Wraps every user-content write:
 
 ```ts
 // lib/moderation.ts
-import 'server-only';
 import OpenAI from 'openai';
 const client = new OpenAI();
 
-export async function moderate(text: string): Promise<{
-  flagged: boolean;
-  categories: string[];
-}> {
-  const res = await client.moderations.create({
-    model: 'omni-moderation-latest',
-    input: text,
-  });
-  const result = res.results[0];
-  return {
-    flagged: result.flagged,
-    categories: Object.entries(result.categories)
-      .filter(([, v]) => v)
-      .map(([k]) => k),
-  };
+export async function moderate(text: string): Promise<{ flagged: boolean; categories: string[]; raw: unknown }> {
+  const r = await client.moderations.create({ model: 'omni-moderation-latest', input: text });
+  const result = r.results[0];
+  const categories = Object.entries(result.categories).filter(([, v]) => v).map(([k]) => k);
+  return { flagged: result.flagged, categories, raw: result };
 }
 ```
 
-### Usage
+Wire at every user-content insert point:
 
-Wrap every endpoint that accepts user-generated content:
 ```ts
-const { flagged } = await moderate(input.body);
-if (flagged) {
-  return Response.json(
-    { error: "We can't post this. It looks like it may contain harmful content." },
-    { status: 422 },
-  );
+// inside the post/comment/listing insert handler
+const m = await moderate(body);
+if (m.flagged) {
+  // Two policies: hard-block or queue-for-review. The agent picks per-category
+  // based on the user's tolerance (asked in DIALOGUE below).
+  await db.insert(moderationQueue).values({
+    contentRef: { table: 'posts', id: tempId },
+    flagged_categories: m.categories,
+    body_snippet: body.slice(0, 500),
+    status: 'pending',
+  });
+  if (CATEGORIES_HARD_BLOCK.has(m.categories[0])) {
+    return Response.json({ error: 'Content flagged. Please revise.' }, { status: 422 });
+  }
+  // Queue for admin review but allow the post (soft-flag).
 }
 ```
 
-User-facing message stays generic and friendly. Don't surface raw category names &mdash; they tend to be more inflammatory than the original content. Log the categories server-side so admins can see patterns.
+**Layer 2: Use-case-specific public-domain pattern repos**
 
-For images, use `'omni-moderation-latest'` with a multimodal input (URL or base64). For audio/video, transcribe first then moderate the text.
+For domains the OpenAI endpoint isn't tuned to (financial advice, medical claims, profanity localization for non-English, gaming-specific slurs, prompt-injection patterns in AI inputs), the agent searches GitHub for relevant public-domain / MIT-licensed pattern lists. Examples to check:
+
+- `LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words` (multilingual profanity)
+- `linkpoolio/awesome-content-moderation` (curated index)
+- Domain-specific lists for medical / financial / legal claims (per the user's vertical)
+
+The agent reads them, picks the relevant subset, and ships it as a small `lib/moderation-patterns.ts` regex/dictionary that runs **before** the OpenAI call (cheaper to filter obvious junk locally).
+
+**Layer 3: Bespoke moderation logic** — for the platform's specific concerns
+
+Some moderation needs are unique to the product:
+
+- A recipe app: filter ingredient-based unsafe combinations (e.g., specific allergen-omission claims).
+- A marketplace: detect listings that look like scams (out-of-pattern pricing, copy-pasted descriptions across sellers).
+- An AI tool: detect prompt-injection attempts in user input meant to subvert the system prompt.
+- A community: detect coordinated-inauthentic-behavior patterns (10 brand-new accounts posting similar content).
+
+The agent **proposes 2-3 bespoke checks** based on the platform after analyzing PROJECT.md + the user-content surfaces. Each becomes a small function in `lib/moderation-bespoke.ts`. The user approves before they ship.
+
+### DIALOGUE — set the policy
+
+The agent asks once per category: *"For [category, e.g., 'harassment']: hard-block (won't post), soft-flag (posts but goes to admin queue), or allow (no action)?"* The defaults the agent suggests:
+
+| Category | Default policy |
+| --- | --- |
+| Sexual involving minors | **Hard-block, immediate report** to NCMEC (US) — required by law |
+| Other sexual | Soft-flag for non-adult platforms; allow for explicitly-adult platforms |
+| Hate / harassment | Hard-block above a high-severity threshold; soft-flag below |
+| Violence | Soft-flag |
+| Self-harm | Soft-flag + show resources |
+| Spam / scam | Hard-block |
+| Prompt injection (AI tools) | Hard-block |
+
+The user can override; defaults are reasonable starting points.
+
+### Simulate flows in unit tests — dial in scope before launch
+
+This is critical: the agent writes **unit tests that simulate moderation across realistic content** before going live. Without tests, the moderation either over-blocks (legitimate content gets hard-blocked) or under-blocks (real abuse gets through).
+
+```ts
+// tests/unit/moderation.test.ts
+import { describe, it, expect } from 'vitest';
+import { moderate } from '@/lib/moderation';
+
+describe('moderation policy', () => {
+  it('allows a normal recipe description', async () => {
+    const m = await moderate('A simple roast chicken recipe with rosemary and lemon.');
+    expect(m.flagged).toBe(false);
+  });
+  it('blocks slurs', async () => {
+    // The actual test uses a known-flagged phrase; redacted here.
+    const m = await moderate('<a known harassment-category test phrase>');
+    expect(m.flagged).toBe(true);
+  });
+  it('does not block strong disagreement', async () => {
+    const m = await moderate("I really dislike this recipe — too salty for my taste.");
+    expect(m.flagged).toBe(false);   // criticism is not harassment
+  });
+  // ... 10-20 cases per platform's relevant categories
+});
+```
+
+The agent generates **20-50 test cases per platform** representative of the audience's actual writing style, including edge cases (sarcasm, criticism, technical terms that look like slurs, foreign-language false positives). The test suite is the calibration — when a real false positive shows up in production, add it to the test suite first, fix the policy, confirm tests pass.
+
+Sub-skill 16 e2e tests include a "moderation flow" that walks the admin through the queue and asserts approve/reject works.
+
+### Anti-patterns
+
+- **Shipping without moderation on a UGC platform.** Inevitable abuse will land within the first 50 users.
+- **Hard-blocking without an admin queue.** Users can't appeal; legitimate content gets censored. Soft-flag + queue gives the founder oversight.
+- **Bespoke moderation without simulated tests.** You'll over- or under-block, and won't know which until users complain.
+- **Logging the moderation API's full response with user content into observability.** That's a PII leak (sub-skill 11 logging rule). Log the moderation decision + categories, not the body.
 
 ## Anti-patterns to avoid
 
@@ -214,5 +365,7 @@ For images, use `'omni-moderation-latest'` with a multimodal input (URL or base6
 - `lib/ai.ts` exists and is the single entry point for every AI call.
 - One AI feature is wired end-to-end and the user has tried it on `localhost`.
 - A `# AI` line in `PROJECT.md` records: which feature, which schema, expected per-call cost.
+- For UGC platforms: 3-layer moderation wired (OpenAI Moderation + public-domain patterns + bespoke checks). Per-category policy decided with the user. 20+ unit tests for the moderation policy. Admin queue accessible from `/admin` (cross-ref sub-skill 07).
+- AI response caching wired where appropriate; `aiCache` table exists; cache hit rate visible in the Analytics tab (cross-ref sub-skill 08); daily cleanup cron deletes expired entries.
 
 Move on to `06-chatbot.md`.

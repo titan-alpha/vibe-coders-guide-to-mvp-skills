@@ -58,6 +58,83 @@ Ensure server returns Brotli/Gzip on JSON. Vercel does this automatically. Custo
 ### 10. Deduplication
 If the same data is fetched by multiple components on a page (header avatar, sidebar profile, settings link), deduplicate at the data-fetching layer. SWR does this automatically with the same key; React Query does the same with the same query key.
 
+## AUTONOMOUS — search (when the platform has searchable content)
+
+Content products, catalogs, and most consumer MVPs need search. The agent **proposes a search strategy** based on the platform's content shape and scale.
+
+### Decision tree
+
+| Content shape + scale | Recommendation |
+| --- | --- |
+| < 10K rows, simple keyword match (recipes, blog posts, FAQs) | **Postgres full-text search** (`tsvector` + `tsquery`). Free, in your existing DB. |
+| 10K–100K rows OR semantic search needed | **pgvector** for semantic + Postgres FTS for keyword. Hybrid. Free. |
+| > 100K rows OR sub-100ms search latency needed at scale | **Typesense** (OSS, self-hostable, free) OR **Meilisearch** (OSS, free). Fast, dedicated, low ops cost. |
+| Marketplace / e-commerce / "search must include faceting + ranking + analytics" | **Algolia** (paid, ~$1/1000 records). Best-in-class but expensive past free tier. |
+| User wants to defer (no search v1) | Render a `<input>` that filters client-side over a list of < 200 items. Upgrade later. |
+
+### Postgres FTS pattern (default for most MVPs)
+
+```sql
+-- Add a generated tsvector column on the searchable table.
+alter table recipes add column search_vector tsvector
+  generated always as (
+    to_tsvector('english',
+      coalesce(title, '') || ' ' ||
+      coalesce(description, '') || ' ' ||
+      coalesce(array_to_string(ingredients, ' '), '')
+    )
+  ) stored;
+
+create index idx_recipes_search on recipes using gin (search_vector);
+```
+
+Query:
+
+```ts
+// lib/search.ts
+import { db } from '@/lib/db';
+import { sql } from 'drizzle-orm';
+
+export async function searchRecipes(q: string, limit = 20) {
+  return db.execute(sql`
+    select id, slug, title, description,
+      ts_rank(search_vector, plainto_tsquery('english', ${q})) as rank
+    from recipes
+    where search_vector @@ plainto_tsquery('english', ${q})
+    order by rank desc
+    limit ${limit}
+  `);
+}
+```
+
+### pgvector hybrid pattern
+
+For semantic search (typo tolerance, "find similar" queries), generate embeddings with the existing `aiCall` infrastructure, store via pgvector, and rank by cosine similarity. Pair with FTS for hybrid: re-rank top-K from each, return the merged set.
+
+### Scaling the search index alongside the DB
+
+When users start hitting search 100+ times/sec, FTS competes with regular reads. Move search to a read replica or graduate to Typesense/Meilisearch. The agent flags this as "post-MVP" unless the user is starting from known-high-traffic.
+
+### Search UI
+
+A simple `<input>` with debounced fetch (300ms) hits a `/api/search` endpoint that returns JSON. Renders results below. Highlight matching terms with `<mark>`. Empty-state copy: "No results — try [synonym] or browse [category]."
+
+For instant-feedback patterns, add `pg_trgm` for fuzzy matching:
+
+```sql
+create extension if not exists pg_trgm;
+create index idx_recipes_title_trgm on recipes using gin (title gin_trgm_ops);
+```
+
+Then `select * from recipes where title % 'rost chiken'` matches "Roast Chicken" despite typos.
+
+### Anti-patterns
+
+- Defaulting to Algolia at MVP scale. Postgres FTS is free and covers 80% of cases. Move only when you have a specific reason.
+- Client-side search over a fetched JSON of all rows. Works at < 200 rows; falls over past that.
+- Search that queries the DB on every keystroke without debounce. Cripples the DB.
+- No empty-state UX. "No results" with no further action means the user bounces.
+
 ## DIALOGUE — propose fixes (use layman language)
 
 Come back to the user with a short list of the highest-impact fixes. Lead with what matters in plain words:
@@ -87,5 +164,6 @@ Apply what's agreed. Note rejected items in `# Open questions` for post-MVP revi
 - Public, semi-static read endpoints have appropriate cache TTLs.
 - Real-time-feeling features use the right transport (polling/SSE/WebSockets) for their actual latency need.
 - A `# Data` section in `PROJECT.md` records the audit findings, the changes made, and any items deferred to post-MVP.
+- Search is wired (or explicitly skipped with reason) using the appropriate strategy from the decision tree.
 
 Move on to `14-deploy.md`.

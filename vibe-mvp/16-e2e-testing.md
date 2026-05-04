@@ -128,6 +128,204 @@ E2E_BASE_URL=https://<your-domain> npm run test:e2e -- tests/e2e/flows/
 
 The journey tests (signup → core feature → sign-out) should pass identically. If they don't, something in the deploy environment is different (env var missing, DNS not propagated, build mode mismatched). Investigate before declaring ship-ready.
 
+## Pass — Race-condition + timing tests
+
+Per the SKILL.md operating rule, every UI surface gets checked for race conditions and timing issues during design (sub-skill 02) and tested explicitly here. Tests live in `tests/e2e/race.spec.ts` so they're discoverable as a class.
+
+The agent identifies race-prone surfaces and writes tests for each. The patterns:
+
+### Double-submit prevention
+
+Test: clicking submit twice in 50ms creates exactly one record.
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('signup form does not double-submit on rapid double-click', async ({ page, request }) => {
+  await page.goto('/signup');
+  await page.fill('input[name=email]', `e2e+${Date.now()}@test.com`);
+  await page.fill('input[name=firstName]', 'Test');
+  await page.fill('input[name=lastName]', 'User');
+  await page.fill('input[name=password]', 'TestPass1234!');
+  await page.check('input[name=acceptTos]');
+
+  // Click twice with a tiny delay — simulates a user double-tap or fast network.
+  const button = page.locator('button[type=submit]');
+  await Promise.all([
+    button.click(),
+    button.click({ delay: 0 }),
+  ]);
+
+  await page.waitForLoadState('networkidle');
+  // Assert: exactly one user row was created (query via internal admin API or DB harness).
+  const rows = await request.get(`/api/internal/test/users?email=${encodeURIComponent('the-email')}`);
+  expect((await rows.json()).count).toBe(1);
+});
+```
+
+The submit button should be `disabled` after the first click until the response settles (server action's `useFormStatus` hook does this in Next.js). Belt-and-suspenders: an `idempotency_key` (UUIDv4 generated in the form, sent with the submit) plus a unique constraint on `(email, idempotency_key)` in the schema makes double-submit impossible regardless of UI state.
+
+### Out-of-order webhook delivery
+
+Test: webhooks arrive in 2 → 1 order; the system reaches the correct final state.
+
+```ts
+test('subscription webhooks handled out-of-order produce correct final state', async ({ request }) => {
+  // Send the "updated" event before the "created" event.
+  const customer = `cus_test_${Date.now()}`;
+  await request.post('/api/stripe/webhook', {
+    headers: { 'stripe-signature': await signTestPayload(updatedPayload(customer)) },
+    data: updatedPayload(customer),
+  });
+  await request.post('/api/stripe/webhook', {
+    headers: { 'stripe-signature': await signTestPayload(createdPayload(customer)) },
+    data: createdPayload(customer),
+  });
+  // Final state should reflect the latest event.created timestamp, not arrival order.
+  const sub = await request.get(`/api/internal/test/subscriptions/${customer}`);
+  expect((await sub.json()).status).toBe('active');
+});
+```
+
+The webhook handler must compare `event.created` timestamps and ignore older arrivals when newer state is already persisted.
+
+### Concurrent edits to the same record
+
+Test: two users editing the same record simultaneously don't silently overwrite each other.
+
+```ts
+test('two simultaneous edits surface a conflict', async ({ browser }) => {
+  const ctxA = await browser.newContext({ storageState: 'tests/e2e/auth-states/userA.json' });
+  const ctxB = await browser.newContext({ storageState: 'tests/e2e/auth-states/userB.json' });
+  const pageA = await ctxA.newPage();
+  const pageB = await ctxB.newPage();
+
+  await pageA.goto('/recipes/test-recipe/edit');
+  await pageB.goto('/recipes/test-recipe/edit');
+
+  await pageA.fill('input[name=title]', 'A version');
+  await pageB.fill('input[name=title]', 'B version');
+  await pageA.click('button[type=submit]');
+  await pageA.waitForLoadState('networkidle');
+  await pageB.click('button[type=submit]');
+
+  // B's submit should fail with a conflict notice (optimistic locking via updated_at), not silently overwrite A.
+  await expect(pageB.locator('[role=alert]')).toContainText(/conflict|out of date|please refresh/i);
+});
+```
+
+Schema enforces this with an `updated_at` column and a server-side check: `WHERE id = ? AND updated_at = ?` (the value the client loaded). If 0 rows updated, the client is stale → 409 Conflict.
+
+### Slow response leaves UI in a half-state
+
+Test: throttle the network to 3G; the loading state is visible the entire time the request is in flight; success state appears only after the actual write completes.
+
+```ts
+test('save shows loading state for the full duration of the request', async ({ page }) => {
+  await page.goto('/recipes/new');
+  await page.route('**/api/recipes', async (route) => {
+    await new Promise(r => setTimeout(r, 1500));    // simulate slow server
+    await route.continue();
+  });
+
+  await page.fill('input[name=title]', 'Slow recipe');
+  const save = page.locator('button[type=submit]');
+  const saving = page.locator('[data-loading=true]');
+
+  await save.click();
+  await expect(saving).toBeVisible();              // loading shown
+  await expect(save).toBeDisabled();               // re-submit prevented
+  await expect(page.locator('[role=status]:has-text(/saved/i)')).toBeVisible({ timeout: 5000 });
+  await expect(saving).toBeHidden();               // loading cleared
+});
+```
+
+### What the agent does at each surface
+
+For each new feature, the agent walks this checklist BEFORE shipping:
+
+1. **Can this surface be double-submitted?** If yes → disable button on click + idempotency key.
+2. **Are there webhooks involved?** If yes → out-of-order test using `event.created` ordering.
+3. **Can two users (or two tabs of one user) edit the same record?** If yes → optimistic locking via `updated_at` column + 409 surface in the UI.
+4. **Is there a slow operation?** If yes → loading state visible for the full duration; button disabled; success state only after completion.
+5. **Are there optimistic UI updates?** If yes → rollback test (mock the server returning an error after the optimistic update; assert the UI reverts cleanly).
+
+Each yes gets a test. The full set lives in `tests/e2e/race.spec.ts`.
+
+## Pass — User-profile-aware (persona) flow tests
+
+Per the SKILL.md operating rule, generic e2e tests catch generic bugs; persona-driven tests catch the bugs your users actually hit. The agent reads `PROJECT.md` audience and writes per-persona flow tests.
+
+### Generate the personas
+
+From `PROJECT.md` `# Audience`, the agent extracts 2-4 distinct user profiles with concrete usage characteristics. For example, a recipe app for "casual home cooks 25-45" might have:
+
+- **Hands-busy cook**: in the kitchen, fingers messy. Tabs/scrolls with knuckles or a re-tap. Pauses 2-5 minutes mid-flow to rinse hands or check on something. Likely to leave the page idle.
+- **Multi-tab planner**: weekend planner who opens 5-10 recipes in tabs to compare. Switches between them rapidly. Likely to hit pages with stale state from earlier sessions.
+- **One-shot visitor**: arrived from search, looking for one specific recipe. Will not log in. Will leave in 60 seconds either way.
+
+For a B2B SaaS for "ops managers at 50-500-person companies":
+
+- **Invited-by-admin user**: never signs up directly; arrives via an admin-issued invite link. The agent's invited-user flow needs its own test.
+- **Audit-mode user**: works in compliance / has high read activity, low write. Spends time on history/log views.
+- **First-time-evaluator**: trial user who needs to evaluate the product in 15 minutes. Friction at minute 3 = lost deal.
+
+### Per-persona test files
+
+Each persona gets one test file in `tests/e2e/personas/<persona-slug>.spec.ts`:
+
+```ts
+// tests/e2e/personas/hands-busy-cook.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Persona: Hands-busy cook', () => {
+  test('recipe page survives 5-minute idle without losing scroll position', async ({ page }) => {
+    await page.goto('/recipes/roast-chicken');
+    await page.evaluate(() => window.scrollTo(0, 1000));
+    const beforeScroll = await page.evaluate(() => window.scrollY);
+
+    // Simulate a 5-minute idle. Real test uses a shorter mock; the assertion
+    // is that the page didn't auto-refresh, lose state, or get logged out.
+    await page.waitForTimeout(5000);   // 5s in test; treat as proxy for 5 minutes
+    const afterScroll = await page.evaluate(() => window.scrollY);
+    expect(afterScroll).toBe(beforeScroll);
+    await expect(page.locator('h1')).toBeVisible();   // page still rendered, not crashed
+  });
+
+  test('rapid double-tap on "save recipe" only saves once', async ({ page }) => {
+    // ... uses the race-condition pattern from above ...
+  });
+
+  test('"prep mode" view stays awake — does not let the screen sleep', async ({ page }) => {
+    // Look for the wake-lock API call when prep mode is active.
+    const wakeLockCalled = await page.evaluate(() => 'wakeLock' in navigator);
+    expect(wakeLockCalled).toBeTruthy();
+  });
+});
+```
+
+```ts
+// tests/e2e/personas/invited-b2b-user.spec.ts
+test.describe('Persona: Invited B2B user', () => {
+  test('invite link → onboarding → first action without ever seeing /signup', async ({ page }) => {
+    const inviteToken = await createTestInvite('test+invited@example.com');
+    await page.goto(`/signup?email=test%2Binvited@example.com&token=${inviteToken}`);
+    await expect(page.locator('h1')).toContainText(/welcome|set up/i);
+    // ... walk the rest of the invite-acceptance flow ...
+  });
+});
+```
+
+### Coverage rule
+
+**Every persona named in `PROJECT.md` gets at least one persona-specific e2e test.** Sub-skill 16's pre-ship pass verifies all persona files exist and pass.
+
+### Anti-patterns (add to existing list)
+
+- Treating personas as marketing fluff. The audience profile from sub-skill 01 is engineering input — it tells the agent what edge cases to test for.
+- One persona test file with 30 tests. Each persona file should test 3-5 things the persona specifically would hit; if there's a 30-case file, it's not persona-specific anymore.
+- Persona tests that don't reflect actual usage characteristics ("hands-busy cook" with no idle test, "B2B audit user" with no log-history test). The persona's distinguishing characteristic should drive at least one test.
+
 ## Subjective checks the user must do (the carve-out)
 
 Almost nothing — but a small set of decisions are subjective and need a human eye:
@@ -155,6 +353,8 @@ That's the entire user-side test surface. Everything else the agent verifies.
 - `npm run test:crawl` is green on every route in `tests/e2e/routes.ts`, on at least desktop + mobile-lg.
 - `npm run test:visual` is green in BOTH light and dark theme — all baselines matched, OR all diffs were inspected and either fixed or rebaselined with the reason captured in the commit message.
 - Production smoke (`E2E_BASE_URL=<prod> npm run test:e2e -- tests/e2e/flows/`) passes.
+- `tests/e2e/race.spec.ts` exists; race-condition checklist (double-submit, webhook out-of-order, concurrent edits, slow response, optimistic UI rollback) walked for every relevant surface; tests pass.
+- `tests/e2e/personas/<slug>.spec.ts` exists for every persona named in `PROJECT.md # Audience`; each file's distinguishing tests pass.
 - The 1–3 subjective checks for the user (email rendering, brand vibe, copy) have been completed and approved.
 - A `# E2E` section in `PROJECT.md` lists the date of the last clean run, the routes covered, the breakpoints, and any rebaselines committed (with reason).
 
