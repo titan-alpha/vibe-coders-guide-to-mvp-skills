@@ -45,6 +45,14 @@ Skip-paths recorded in `STATE.yaml`:
 - `decisions.cost_monitoring_enabled: false` — skip Tab 7
 - `decisions.error_alerts_enabled: false` — skip Tab 8
 
+Then, in the same exchange, ask about the features tab:
+
+> *"One more — want a **Features** tab? It exposes feature flags at runtime — toggle features on/off without a deploy, schedule features to come online on a specific calendar date, run a percentage-based gradual rollout. Useful when you want to ship behind a flag and roll out controlled. Pairs with the feature_flags schema sub-skill 13 sets up.*
+>
+> *Want this, or skip?"*
+
+Skip-path: `decisions.features_admin_enabled: false` in `STATE.yaml`. Note: the underlying feature-flag schema still ships (sub-skill 13) — only the admin UI for it is gated.
+
 If the user declines the dashboard altogether, skip and move on to `08-monetization.md`. (For a project with auth, gently flag that without an admin dashboard they'll be running SQL by hand to manage users — they'll likely come back to this.)
 
 ## AUTONOMOUS — analyze the codebase
@@ -320,9 +328,9 @@ Once the change-password flow has succeeded, surface a one-line note in the chat
 
 For better UX (custom login form instead of the browser prompt), build `/admin/login` that POSTs the password to a Route Handler, which sets a signed `admin_session` cookie on success. Middleware then checks the cookie. This is a v1.5 upgrade — basic auth + the change-password flow are enough to ship.
 
-## AUTONOMOUS — build the dashboard with up to 8 tabs (subtract any the user opted out of)
+## AUTONOMOUS — build the dashboard with up to 9 tabs (subtract any skipped)
 
-`/admin` has up to 8 tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**, **Feedback**, **Cost**, **Alerts**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`. Skip Feedback the same way if feedback collection was declined. Skip Cost if `decisions.cost_monitoring_enabled` is false. Skip Alerts if `decisions.error_alerts_enabled` is false.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
+`/admin` has up to 9 tabs: **Overview**, **Users**, **Waitlist**, **Usage**, **Notifications**, **Feedback**, **Cost**, **Alerts**, **Features**. (Skip Notifications if the user opted out in the DIALOGUE above — see `STATE.yaml # Decisions`. Skip Feedback the same way if feedback collection was declined. Skip Cost if `decisions.cost_monitoring_enabled` is false. Skip Alerts if `decisions.error_alerts_enabled` is false. Skip Features if `decisions.features_admin_enabled` is false.) Use DaisyUI tabs (`tabs tabs-bordered`) or shadcn-style segmented routes — either works.
 
 ```tsx
 // app/admin/layout.tsx
@@ -343,6 +351,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <Link href="/admin/feedback"      className="tab">Feedback</Link>
         <Link href="/admin/cost"          className="tab">Cost</Link>
         <Link href="/admin/alerts"        className="tab">Alerts</Link>
+        <Link href="/admin/features"      className="tab">Features</Link>
       </nav>
       {children}
     </main>
@@ -1308,6 +1317,135 @@ export default async function AlertsTab({ searchParams }: { searchParams: { leve
 - Alerts that don't link to the admin tab. The email should always include a link to `/admin/alerts` for context.
 - Storing the user's email PII in the alert body. Logs PII rules from sub-skill 11 still apply — redact via the same scrubber.
 
+### Tab 9 — Features
+
+Feature flags let the admin toggle features on/off **at runtime** (no deploy needed), schedule features to activate on a future date/time, and roll out gradually by percentage. Pairs with sub-skill 13's `feature_flags` table.
+
+**Tab UI** (`app/admin/features/page.tsx`):
+
+```tsx
+import { db } from '@/lib/db';
+import { featureFlags } from '@/lib/db/schema';
+import { setFlagAction, scheduleFlagAction, deleteFlagAction } from './actions';
+import { desc } from 'drizzle-orm';
+
+export default async function FeaturesTab() {
+  const flags = await db.select().from(featureFlags).orderBy(desc(featureFlags.updatedAt));
+  return (
+    <section className="space-y-4">
+      <header>
+        <h2 className="text-lg font-semibold">Feature flags</h2>
+        <p className="text-sm opacity-70">Toggle features at runtime. Schedule activations. Roll out by percentage.</p>
+      </header>
+
+      <table className="table">
+        <thead><tr>
+          <th>Flag</th><th>Status</th><th>Rollout</th><th>Scheduled activation</th><th>Updated</th><th>Actions</th>
+        </tr></thead>
+        <tbody>
+          {flags.map(f => (
+            <tr key={f.key} className={f.enabled ? '' : 'opacity-60'}>
+              <td>
+                <div className="font-mono text-sm">{f.key}</div>
+                {f.description && <div className="text-xs opacity-70">{f.description}</div>}
+              </td>
+              <td>
+                <form action={setFlagAction} className="inline">
+                  <input type="hidden" name="key" value={f.key} />
+                  <input type="hidden" name="enabled" value={String(!f.enabled)} />
+                  <button className={`btn btn-xs ${f.enabled ? 'btn-success' : 'btn-ghost border border-base-300/60'}`}>
+                    {f.enabled ? 'On' : 'Off'}
+                  </button>
+                </form>
+              </td>
+              <td>
+                <form action={setFlagAction} className="inline">
+                  <input type="hidden" name="key" value={f.key} />
+                  <input type="hidden" name="rollout_pct" value={String(f.rolloutPct ?? 100)} />
+                  <input type="number" name="rolloutPct" min={0} max={100} step={5} defaultValue={f.rolloutPct ?? 100}
+                    className="input input-xs input-bordered w-16" /> %
+                  <button className="btn btn-xs ml-1">Save</button>
+                </form>
+              </td>
+              <td>
+                <form action={scheduleFlagAction} className="inline">
+                  <input type="hidden" name="key" value={f.key} />
+                  <input type="datetime-local" name="scheduled_activation"
+                    defaultValue={f.scheduledActivation?.toISOString().slice(0, 16) ?? ''}
+                    className="input input-xs input-bordered" />
+                  <button className="btn btn-xs ml-1">Set</button>
+                </form>
+              </td>
+              <td className="text-xs opacity-60">{f.updatedAt.toISOString().slice(0, 16).replace('T', ' ')}</td>
+              <td>
+                <form action={deleteFlagAction} className="inline">
+                  <input type="hidden" name="key" value={f.key} />
+                  <button className="btn btn-xs btn-ghost text-error">Delete</button>
+                </form>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+```
+
+**Server actions** (`app/admin/features/actions.ts`):
+
+```ts
+'use server';
+import { db } from '@/lib/db';
+import { featureFlags } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { revalidatePath } from 'next/cache';
+
+export async function setFlagAction(formData: FormData) {
+  const key = String(formData.get('key'));
+  const enabled = formData.get('enabled') === 'true';
+  const rolloutPct = formData.get('rolloutPct') !== null ? Number(formData.get('rolloutPct')) : undefined;
+  await db.update(featureFlags).set({
+    enabled,
+    ...(rolloutPct !== undefined ? { rolloutPct } : {}),
+    updatedAt: new Date(),
+  }).where(eq(featureFlags.key, key));
+  revalidatePath('/admin/features');
+}
+
+export async function scheduleFlagAction(formData: FormData) {
+  const key = String(formData.get('key'));
+  const dt = String(formData.get('scheduled_activation'));
+  await db.update(featureFlags).set({
+    scheduledActivation: dt ? new Date(dt) : null,
+    updatedAt: new Date(),
+  }).where(eq(featureFlags.key, key));
+  revalidatePath('/admin/features');
+}
+
+export async function deleteFlagAction(formData: FormData) {
+  const key = String(formData.get('key'));
+  await db.delete(featureFlags).where(eq(featureFlags.key, key));
+  revalidatePath('/admin/features');
+}
+```
+
+**Cron for scheduled activations** (extend the lifecycle cron from sub-skill 04):
+
+```ts
+// inside the daily cron
+import { featureFlags } from '@/lib/db/schema';
+import { sql } from 'drizzle-orm';
+
+await db.update(featureFlags)
+  .set({ enabled: true, scheduledActivation: null, updatedAt: new Date() })
+  .where(sql`scheduled_activation is not null and scheduled_activation <= now() and enabled = false`);
+```
+
+So a flag with `scheduled_activation = '2026-06-01 09:00:00'` automatically flips on at that moment without manual intervention.
+
+**Add flags from code**: when the developer adds a `flag('new_dashboard', userId)` call in code (sub-skill 13's helper), the agent appends a row to `featureFlags` with sensible defaults (`enabled: false`, `rollout_pct: 0`, description: derived from the call site). New flags appear in the Features tab automatically; the founder doesn't need to know they were added.
+
 ## Hand-off to the header bell icon (sub-skill 02)
 
 The bell icon lives in the global header rule defined by sub-skill 02 (design). This admin sub-skill owns the data layer and the API contract; sub-skill 02 owns the front-end rendering of the bell, the dropdown, and the unread badge.
@@ -1417,7 +1555,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 
 - `ADMIN_PASSWORD_BOOTSTRAP` was generated, shown once, and used for the first login; the user has since changed it via `/admin/change-password` and the persistent bcrypt hash is stored in `admin_settings.password_hash`. `INITIAL_USAGE_GRANT` is in `.env.local` (and Vercel env after deploy), gitignored.
 - Visiting `/admin` without credentials returns 401.
-- Visiting `/admin` with the correct password renders the up to 8-tab dashboard (subtract any skipped: Notifications / Feedback / Cost / Alerts).
+- Visiting `/admin` with the correct password renders the up to 9-tab dashboard (subtract any skipped: Notifications / Feedback / Cost / Alerts / Features).
 - **Overview** renders 4–6 KPIs with real data.
 - **Users** lists users; Add User works (sends invite if email is configured, whitelists otherwise); Grant +N works; Deactivate / Reactivate works.
 - **Waitlist** lists pending entries; Approve moves the email to `allowedEmails` (and sends an invite if email is configured); Reject works.
@@ -1430,6 +1568,7 @@ Don't add an "Admin" link to the public nav. The founder bookmarks `/admin` them
 - If wired: `feedback` schema exists; `/admin/feedback` tab works (search, filter by status, mark seen/resolved/wontfix); `/api/feedback` endpoint accepts submissions, rate-limited; hamburger menu has the Feedback item; agreed contextual prompts are placed at the surfaces decided with the user; `feedback_surfaces` list is in `STATE.yaml # Decisions`.
 - Cost Monitoring tab works (enabled or explicitly skipped). If enabled: `serviceUnitCosts` seeded with verified prices, daily rollup cron runs, ceilings settable per-service in the UI, hard-block respected on at-capacity calls.
 - Alerts tab works (enabled or explicitly skipped). If enabled: `alert()` is wired into Route Handler errors (via `withMetrics` extension), webhook handler errors, cost ceiling breaches, and health checks. Email dispatch fires for `error`+ levels through Resend (or SendGrid). Frequency-capped at once per 15 min per `(source, title)`. Test alert button verified end-to-end before exit.
+- Features tab works (or explicitly skipped). If enabled: `feature_flags` table seeded; admin can toggle / set rollout % / schedule activation; scheduled activations fire via cron; new code-side `flag()` calls auto-register flags into the table.
 - Any new instrumentation is documented under `# Decisions` in `PROJECT.md`.
 
 Move on to `08-analytics.md` (or skip to `09-monetization.md` if analytics aren't in scope for this mode).

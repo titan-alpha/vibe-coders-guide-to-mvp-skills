@@ -491,6 +491,460 @@ The empty-state copy on the just-signed-up screen is the single most-important s
 - The four state-specific screens have visual baselines.
 - The "just signed up" empty-state copy is voice-consistent and verb-led.
 
+## AUTONOMOUS — seed the platform with real-feeling content (before launch)
+
+For any product where the user expects to see SOMETHING on first visit, the agent ships with a stocked database. A recipe app with 0 recipes feels broken; a marketplace with 0 listings looks abandoned; a community with 0 threads is dead. Empty states are for "you have no items yet" — they are NOT for the product as a whole.
+
+### What to seed (depends on category — see patterns/<category>.md)
+
+The agent reads `STATE.yaml decisions.product_category` and the loaded `patterns/<category>.md` to know what content the platform expects. Examples:
+
+| Category | Seed content |
+| --- | --- |
+| Marketplace | 20-100 listings spanning categories, with realistic-looking images, prices, descriptions, and reviews |
+| Content platform | 10-50 starter articles / recipes / guides / podcasts — actual quality content, not placeholders |
+| Community | 30-100 starter posts across topics; agent-generated AND clearly labeled as such |
+| Productivity tool | Sample data within the user's first workspace (3 demo notes, 5 demo tasks) — labeled as samples, dismissible |
+| SaaS dashboard | Demo organization with sample customers / invoices / records — dismissible after first real-data add |
+| Dev tool | Example projects, code samples in docs, API responses for the playground |
+
+### How to generate it
+
+Three approaches, in order of preference:
+
+1. **Recruit real content** (best). For marketplaces: pre-launch outreach to 10-20 suppliers; for content platforms: write the first 20 pieces yourself or commission them. The seed becomes durable user-facing value. **Always best when feasible.**
+2. **Agent-generate with explicit labeling** (good for content / community / sample data). Use `aiCall` to generate content matching the platform's voice (sub-skill 02 brand voice rules), seed via a one-time migration. Label each item: `metadata: { seeded: true, seeded_at: '...', generated_by: 'agent-v0.3.0' }`. Display a small "Sample" badge in the UI on seeded items. Users can hide them via a setting once they have their own.
+3. **Public-domain or licensed content** (good for niche knowledge bases). Wikipedia for articles; OpenLibrary for book metadata; Wikidata for entities. License-check each source.
+
+The agent **does not** ship a product to public users with empty seed if approach 1 or 2 was viable. The seed is part of the launch.
+
+### Seed spec — write before generating
+
+Write a `seed/spec.md` documenting:
+
+```markdown
+# Seed Plan
+
+- Category: `<from STATE.yaml>`
+- Target counts: 50 recipes, 0 users (no fake users), 0 reviews (will accumulate)
+- Content sources: agent-generated via `lib/ai.ts` with the prompt template at `seed/recipe-prompt.md`
+- Voice: per `PROJECT.md # Voice`
+- Image strategy: hero images from Unsplash API (free tier, attribution in footer)
+- Labeling: every seeded recipe has `metadata.seeded = true`; UI shows small "Curated" badge
+- Removal plan: founder can convert seeded items to "owned" or remove them via `/admin/seed`
+```
+
+### Seed migration script
+
+```ts
+// scripts/seed.ts — run with `npx tsx scripts/seed.ts`
+import 'dotenv/config';
+import { db } from '@/lib/db';
+import { recipes, serviceUsageDaily } from '@/lib/db/schema';
+import { aiCall } from '@/lib/ai';
+import { z } from 'zod';
+
+const Recipe = z.object({
+  title: z.string(), description: z.string(), ingredients: z.array(z.string()),
+  steps: z.array(z.string()), category: z.string(), prep_minutes: z.number(),
+});
+
+const SEED_PROMPTS = [
+  "A simple weeknight pasta with garlic and chili",
+  "A 30-minute one-pot lentil soup",
+  // ... 50 prompts ...
+];
+
+(async () => {
+  for (const prompt of SEED_PROMPTS) {
+    const r = await aiCall({ schema: Recipe, schemaName: 'recipe', instructions: 'Generate a clean, no-blog-intro recipe.', input: prompt });
+    await db.insert(recipes).values({
+      ...r, slug: r.title.toLowerCase().replace(/\W+/g, '-'),
+      metadata: { seeded: true, seeded_at: new Date().toISOString(), generated_by: 'agent-seed-v1' },
+    });
+  }
+  console.log(`Seeded ${SEED_PROMPTS.length} recipes.`);
+})();
+```
+
+### Cost awareness
+
+Agent-generated seed costs real money. For 100 recipes via gpt-5-nano: ~$0.05. For 100 substantial articles via gpt-5-mini: ~$2. **Run the seed once locally**, commit the resulting data as a SQL dump or JSON in `seed/data/`, then deploy reads from there — don't re-run AI generation on every deploy.
+
+```bash
+# After local seed:
+pg_dump --data-only --table=recipes $DATABASE_URL > seed/data/recipes.sql
+git add seed/data/recipes.sql
+```
+
+Production seed step (sub-skill 14 deploy): `psql $DATABASE_URL < seed/data/recipes.sql` runs once on first deploy.
+
+### Anti-patterns
+
+- Shipping a public product with 0 items in the catalog. The launch fails.
+- Generating seed at runtime on every deploy. Wastes money + makes deploys slow + gives different data each time.
+- Hiding the "this is sample data" labeling. Users feel deceived when they figure it out. Honesty + dismissibility = trust.
+- Letting agent-generated seed be the only content forever. Real content from real users replaces it as the platform grows.
+
+Record in `STATE.yaml decisions.seeding_plan` (one line summary) + `decisions.seeded_at`.
+
+## AUTONOMOUS — forms beyond signup (multi-step, draft recovery, save-as-you-type)
+
+The signup form is solved (sub-skill 04). But most products have at least one substantial form beyond signup — configuration, application, listing creation, profile setup, settings, content composition. Form-state patterns are universal and the agent applies them consistently.
+
+### Pattern 1: Multi-step wizard for forms with > 5 fields
+
+Don't show 12 fields on one screen. Break into 3 steps of 4 fields each, with progress indicator at top:
+
+```tsx
+// app/onboarding/page.tsx — pattern
+'use client';
+import { useState } from 'react';
+
+const STEPS = ['Basics', 'Preferences', 'Goals'] as const;
+
+export default function Onboarding() {
+  const [step, setStep] = useState(0);
+  const [data, setData] = useState<Partial<FormShape>>({});
+
+  // Save draft to localStorage on every change so a refresh / accident doesn't lose work.
+  useEffect(() => {
+    localStorage.setItem('onboarding-draft', JSON.stringify(data));
+  }, [data]);
+
+  // Restore draft on mount.
+  useEffect(() => {
+    const saved = localStorage.getItem('onboarding-draft');
+    if (saved) setData(JSON.parse(saved));
+  }, []);
+
+  return (
+    <div className="max-w-md mx-auto p-6">
+      <ol className="flex gap-2 text-xs mb-6">
+        {STEPS.map((s, i) => (
+          <li key={s} className={`flex-1 py-1 text-center rounded ${
+            i < step ? 'bg-success/20 text-success' :
+            i === step ? 'bg-primary/20 text-primary font-medium' :
+            'bg-base-200 opacity-60'
+          }`}>{s}</li>
+        ))}
+      </ol>
+      {/* render the current step's fields */}
+      <div className="flex justify-between mt-6">
+        <button onClick={() => setStep(s => Math.max(0, s - 1))} disabled={step === 0} className="btn btn-ghost">Back</button>
+        <button onClick={() => step === STEPS.length - 1 ? submit(data) : setStep(s => s + 1)} className="btn btn-primary">
+          {step === STEPS.length - 1 ? 'Finish' : 'Next'}
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+### Pattern 2: Save-as-you-type for editor-shaped forms
+
+For any form where the user is composing content (notes, posts, drafts, listings), don't make them click "Save." Save automatically with a debounce + visible indicator:
+
+```tsx
+const [draft, setDraft] = useState('');
+const [savedAt, setSavedAt] = useState<Date | null>(null);
+const [saving, setSaving] = useState(false);
+
+useEffect(() => {
+  if (!draft) return;
+  setSaving(true);
+  const t = setTimeout(async () => {
+    await fetch('/api/drafts', { method: 'PUT', body: JSON.stringify({ body: draft }) });
+    setSavedAt(new Date()); setSaving(false);
+  }, 1500);
+  return () => { clearTimeout(t); setSaving(false); };
+}, [draft]);
+
+return (
+  <>
+    <textarea value={draft} onChange={(e) => setDraft(e.target.value)} className="textarea textarea-bordered w-full h-96" />
+    <div className="text-xs opacity-60 mt-2">
+      {saving ? 'Saving…' : savedAt ? `Saved ${formatRelative(savedAt)}` : ''}
+    </div>
+  </>
+);
+```
+
+### Pattern 3: Draft recovery from accidental navigation
+
+For any non-trivial form (signup is the exception — keep that one short and submit-or-cancel), warn before unload if there are unsaved changes:
+
+```tsx
+useEffect(() => {
+  if (!hasUnsavedChanges) return;
+  const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+  window.addEventListener('beforeunload', handler);
+  return () => window.removeEventListener('beforeunload', handler);
+}, [hasUnsavedChanges]);
+```
+
+Combined with localStorage draft saving (Pattern 1's `localStorage.setItem`), the user can navigate away and come back to find their draft restored. Combine both — they're complementary.
+
+### Pattern 4: Inline validation, not modal popups
+
+When validation fails on submit OR on field blur:
+
+```tsx
+// Anti-pattern: alert("Email is invalid")
+// Right pattern: inline error below the field
+<label className="form-control">
+  <input name="email" type="email" required
+    aria-invalid={!!emailError}
+    aria-describedby="email-error"
+    className={`input input-bordered ${emailError ? 'input-error' : ''}`}
+  />
+  {emailError && <span id="email-error" className="label-text-alt text-error mt-1">{emailError}</span>}
+</label>
+```
+
+Use the platform's voice (sub-skill 02 brand voice) for the error message. "We've used that email already" not "Email already exists."
+
+### Pattern 5: Honest submit-button states
+
+```tsx
+const { pending } = useFormStatus();
+<button type="submit" disabled={pending} className="btn btn-primary">
+  {pending ? <><span className="loading loading-spinner loading-xs" /> Saving…</> : 'Save'}
+</button>
+```
+
+Disable during submit (also blocks double-submit — see sub-skill 16 race-condition tests).
+
+### What the agent does for every new form
+
+1. Count the fields. If > 5, multi-step wizard. If ≤ 5, single screen.
+2. If editor-shaped (composing content), wire save-as-you-type. If transactional, wire submit-button + warn-before-unload.
+3. Wire inline validation per field; use voice-consistent error messages.
+4. Wire `useFormStatus` for the submit button.
+5. Wire localStorage draft for any form with > 3 fields.
+6. Wire draft recovery on mount.
+
+Append a one-line note to `STATE.yaml decisions.form_patterns_applied` per form built so the founder has visibility.
+
+## AUTONOMOUS — sharing / collaboration patterns (when artifacts are shareable)
+
+Most products have at least one shareable artifact: a recipe to share with a friend, a doc to collaborate on, a listing to send to someone, a profile to show off. Sharing UX is conventional but easy to ship wrong.
+
+### Decision: which sharing modes do you need?
+
+The agent asks once based on `STATE.yaml decisions.product_category` and the platform shape:
+
+> *"For your <product>, the things users will want to share are <items>. Three sharing modes:*
+> *(a) **Public link** — anyone with the URL can view (no signup). Simplest. Good for content + listings.*
+> *(b) **Permissioned link** — link includes a token; permission level (view / comment / edit) baked in. Optional expiry.*
+> *(c) **Per-user invite** — share with a specific email; receiver sees it in their authed shell.*
+>
+> *Most MVPs need (a) at minimum. Add (b) if collaboration matters; add (c) for B2B / team products. Which?"*
+
+Default for most consumer MVPs: (a). Default for B2B: (b) + (c).
+
+### Public link pattern
+
+```ts
+// schema.ts
+export const items = pgTable('items', {
+  // ... existing fields ...
+  visibility: text('visibility').notNull().default('private'),  // 'private' | 'public'
+  publicSlug: text('public_slug').unique(),                      // generated when made public; URL-safe
+});
+
+// Toggle in UI:
+<label className="label cursor-pointer">
+  <input type="checkbox" checked={item.visibility === 'public'}
+    onChange={async () => {
+      await fetch(`/api/items/${item.id}/visibility`,
+        { method: 'PUT', body: JSON.stringify({ visibility: item.visibility === 'public' ? 'private' : 'public' }) });
+    }}
+    className="toggle toggle-primary" />
+  <span>Anyone with the link can view</span>
+</label>
+
+{item.visibility === 'public' && (
+  <div className="mt-2 flex gap-2">
+    <input value={`https://<domain>/p/${item.publicSlug}`} readOnly className="input input-bordered input-sm flex-1 font-mono text-xs" />
+    <button className="btn btn-sm" onClick={() => navigator.clipboard.writeText(`...`)}>Copy</button>
+  </div>
+)}
+```
+
+Public route: `/p/<slug>` — no auth, fetches the item if `visibility === 'public'`, returns 404 otherwise. Apply rate limiting (sub-skill 11) to prevent enumeration.
+
+### Permissioned link pattern (token-based)
+
+```ts
+// schema.ts
+export const itemShares = pgTable('item_shares', {
+  tokenHash: text('token_hash').primaryKey(),     // sha256 of the actual token
+  itemId: uuid('item_id').notNull().references(() => items.id),
+  permission: text('permission').notNull(),        // 'view' | 'comment' | 'edit'
+  expiresAt: timestamp('expires_at'),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// Generate share link:
+const token = crypto.randomBytes(24).toString('base64url');
+const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+await db.insert(itemShares).values({ tokenHash, itemId, permission, expiresAt });
+const url = `https://<domain>/items/${itemId}?share=${token}`;
+
+// Receiver-side: middleware reads ?share=, verifies sha256, grants permission for the request.
+```
+
+Show all active shares per item with revoke button + expiry status. UI:
+
+```tsx
+{shares.map(s => (
+  <li key={s.tokenHash} className="flex items-center gap-2 text-sm">
+    <span className={`badge badge-sm ${s.permission === 'edit' ? 'badge-warning' : 'badge-ghost'}`}>{s.permission}</span>
+    <span className="opacity-70">expires {s.expiresAt ? formatRelative(s.expiresAt) : 'never'}</span>
+    <button className="btn btn-xs btn-ghost ml-auto" onClick={() => revokeShare(s.tokenHash)}>Revoke</button>
+  </li>
+))}
+```
+
+### Per-user invite pattern (B2B / teams)
+
+For multi-user workspaces (sub-skill 04 B2B section), invite via email — the receiver sees the item in their authed shell on next sign-in:
+
+- `itemInvites` table: `itemId`, `inviteeEmail`, `permission`, `acceptedAt`, `expiresAt`, `inviterId`.
+- On invite: send an email via `sendEmail` (sub-skill 04) with a link to the item.
+- On the receiver's first authed visit to the item: check `itemInvites` for a row matching their email; if found and not expired, grant the permission and mark `acceptedAt`.
+
+### Social meta tags per shared item
+
+When a user shares a public link, the receiver pastes it into iMessage / Slack / Twitter — the preview that renders matters. Every shared route needs:
+
+```tsx
+// app/p/[slug]/page.tsx
+export async function generateMetadata({ params }: { params: { slug: string } }) {
+  const item = await fetchPublicItem(params.slug);
+  return {
+    title: `${item.title} — <Product>`,
+    description: item.description.slice(0, 155),
+    openGraph: {
+      title: item.title,
+      description: item.description.slice(0, 155),
+      images: [{ url: `/api/og/items/${item.id}`, width: 1200, height: 630 }],
+    },
+    twitter: { card: 'summary_large_image' },
+  };
+}
+```
+
+Generate per-item OG images dynamically with `next/og` — each shared item gets a tailored card.
+
+### Anti-patterns
+
+- Sharing as a v2 feature. Most users want to share early — even basic public-link sharing is cheap to ship.
+- Public links without rate limiting. Enumeration via `/p/<slug>` walking shouldn't reveal everyone's items. Sub-skill 11 rate limit covers this; or use longer slugs (12+ chars).
+- Storing raw share tokens in the DB. Always sha256-hash; the URL is the credential.
+- Forever-tokens with no UI to revoke. Users want to take back access.
+- No preview when shared in iMessage / Slack. Every public route needs OG tags.
+
+Cross-references:
+- B2B / team products: `04-auth.md` B2B section for the multi-user model.
+- Public route security (rate limiting, no enumeration) → `11-security.md`.
+- OG image generation → `12-performance.md` SEO surface.
+
+## AUTONOMOUS — feedback design system (loading / toast / error / motion)
+
+Founders end up with three different loading-spinner styles, mixed error language, ad-hoc toast positioning, and no motion language. The agent codifies the patterns once in `02-design` so every later skill applies them consistently.
+
+### Loading states — three patterns
+
+| Pattern | When to use | Example |
+| --- | --- | --- |
+| **Skeleton** | Predictable layout known in advance, > 200ms wait | Dashboard cards loading; list rows; profile pages |
+| **Spinner** | Layout unknown OR < 200ms wait OR small in-place action | Submit buttons, mid-page refreshes |
+| **Progress bar** | Long operation with measurable progress | File uploads, multi-step migrations, AI generation with token count |
+
+```tsx
+// components/Skeleton.tsx — use everywhere a card/row will render
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`bg-base-200 animate-pulse rounded ${className}`} />;
+}
+
+// Usage:
+{loading ? (
+  <div className="grid gap-3">
+    <Skeleton className="h-24" />
+    <Skeleton className="h-24" />
+    <Skeleton className="h-24" />
+  </div>
+) : (
+  items.map(...)
+)}
+```
+
+Skeleton dimensions match the final-rendered element's dimensions — no layout shift when real data arrives.
+
+### Toast / ephemeral notification pattern
+
+Use a single `<Toaster />` mount in `app/layout.tsx`. The agent picks **sonner** (`npm install sonner`) — small, accessible, theme-aware:
+
+```tsx
+// app/layout.tsx
+import { Toaster } from 'sonner';
+<Toaster position="bottom-right" richColors closeButton />
+
+// Anywhere:
+import { toast } from 'sonner';
+toast.success('Recipe saved');
+toast.error("Couldn't save — try again?");
+toast('You have 3 unread messages', { action: { label: 'View', onClick: () => router.push('/messages') } });
+```
+
+**Voice rules** (per sub-skill 02 brand voice):
+- Success toasts: short verb-led ("Saved" / "Sent" / "Created"). Don't add unnecessary words ("Successfully saved your recipe!" — drop "successfully" + "your recipe").
+- Error toasts: tell the user what to do next, not just what went wrong. "Couldn't save — try again?" beats "Save failed."
+- Toasts auto-dismiss after 4 seconds for success / info; **stay until dismissed for error** (user needs to read it).
+- One toast at a time when possible; sonner handles stacking.
+
+### Inline error pattern (forms — see also Forms section above)
+
+Per-field error shown below the field, in the platform's error color, with `aria-describedby` for screen readers. NEVER use browser-default `alert()`. NEVER use a modal popup for a single-field error.
+
+### Motion language — pick three durations and stick to them
+
+Inconsistent motion is one of the loudest "this feels amateur" signals. The agent picks once and applies everywhere:
+
+```css
+/* globals.css — append to the design system tokens */
+:root {
+  --motion-instant: 80ms;       /* hovers, focus rings, color transitions */
+  --motion-quick:   180ms;       /* state changes — toggles, expands, slide-ins */
+  --motion-deliberate: 320ms;    /* page transitions, modal opens, large reveals */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+```
+
+Use one of these three CSS custom properties for every transition. No `200ms` or `400ms` floating around — they make the product feel inconsistent.
+
+**Easings** — pick two:
+- `cubic-bezier(0.22, 1, 0.36, 1)` — ease-out, the default for things appearing.
+- `cubic-bezier(0.4, 0, 0.2, 1)` — material standard, for things moving on the page.
+
+### Reduced motion respected globally
+
+The CSS rule above + the agent never relying on motion to convey meaning (e.g., a fade-in to indicate "new" — also add a badge / color signal).
+
+### Anti-patterns
+
+- Three different spinner libraries in one app.
+- Toast positions that change between routes (top on landing, bottom on dashboard).
+- Errors as `alert()`. Confirms not even basic UX hygiene was applied.
+- Animation durations all over the map (200ms here, 350ms there, 500ms over there). Pick three; use them.
+- Animations that block interaction. The user clicks "Save"; the success animation runs for 600ms; meanwhile they can't click anything. Cap blocking animations at 200ms.
+
 ## AUTONOMOUS — set up the test rig (do this BEFORE leaving 02)
 
 Sub-skill 02 is the last skill where the project is "small enough to install dev tooling without breaking anything." Every later skill writes tests against this rig.
@@ -695,6 +1149,10 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - A voice that doesn't match the audience (children's education in dev-tool voice, fintech in playful-app voice). Read the audience back through the voice rules.
 - An activation flow longer than 60 seconds for a first-time user. Cut every step that doesn't earn its place.
 - Tooltips as the only way to understand a control. Labels + clear icons first; tooltips add reinforcement, not basic comprehension.
+- Shipping a public product with empty seed (0 listings, 0 articles, 0 starter content). The launch fails on first visit.
+- Forms beyond signup with no draft recovery, no inline errors, no save-as-you-type for editor-shaped flows.
+- Sharing as a v2 feature. Even basic public-link sharing is cheap to ship and most users want it on day 1.
+- Three different loading patterns / toast positions / motion durations across the app. Pick once; reuse.
 
 ## Exit criteria
 
@@ -714,5 +1172,9 @@ for (const route of ROUTES.filter(r => !r.auth)) {
 - Voice axes scored (Formal/Casual, Spare/Generous, Sincere/Witty, Authoritative/Conversational) and recorded in `STATE.yaml decisions.voice_axes`.
 - Voice rules and word-list captured in `PROJECT.md # Voice`.
 - Aha moment named; time-to-aha < 60s asserted by `tests/e2e/activation.spec.ts`; the four activation-state screens have visual baselines.
+- For products with public-facing content surfaces: seed plan documented in `seed/spec.md`, seed migration runs from `seed/data/`, `STATE.yaml decisions.seeding_plan` and `seeded_at` set.
+- Form patterns applied to every form > 5 fields (multi-step) and every editor-shaped form (save-as-you-type + draft recovery + warn-before-unload). Inline validation everywhere; submit buttons honor `useFormStatus`.
+- Sharing modes wired per the dialogue (public-link / permissioned / per-user invite). Each shared route has OG tags + dynamic OG image generation.
+- Feedback design system codified: skeleton + spinner + progress bar patterns, single Toaster mount with sonner, motion language with --motion-instant / --motion-quick / --motion-deliberate tokens, prefers-reduced-motion respected globally.
 
 Move on to `03-compliance.md`.

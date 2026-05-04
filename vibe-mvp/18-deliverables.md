@@ -166,6 +166,194 @@ open deliverables/
 
 Then report a short summary listing every file produced with a one-line description.
 
+## AUTONOMOUS — investor data room (investor-ready mode only)
+
+The pitch deck opens the door; the data room closes the deal. For founders going into a fundraise, the data room is what investors review during diligence. Missing it means scrambling under pressure during a process where speed signals confidence.
+
+**Mode-gate**: only run this for `investor-ready` mode. For all other modes, skip with a note in `STATE.yaml`.
+
+### What goes in the data room
+
+A `deliverables/data-room/` folder structure the agent generates:
+
+```
+data-room/
+├── 00-overview/
+│   ├── one-pager.pdf                 # 1-page summary (already in 18 base section)
+│   ├── pitch-deck.pdf                # already in 18 base section
+│   └── data-room-index.md            # this is the README of the data room
+├── 01-financials/
+│   ├── financial-model.xlsx          # 5-year projection with assumptions
+│   ├── unit-economics.md             # CAC, LTV, payback period, gross margin
+│   └── current-burn.md               # monthly cash burn + runway
+├── 02-product/
+│   ├── product-overview.md           # what it does, who for, why now (deeper than the deck)
+│   ├── roadmap.md                    # next 6-12 months
+│   └── architecture.md               # high-level technical overview (1 diagram + paragraphs)
+├── 03-traction/
+│   ├── metrics.md                    # MAU/DAU/retention/conversion — pulled from sub-skill 08 analytics
+│   ├── customer-references.md        # 3-5 customer testimonials with permission to contact
+│   └── waitlist.md                   # if relevant: waitlist size + growth rate
+├── 04-team/
+│   ├── founder-bios.md               # full bios + LinkedIn + relevant background
+│   ├── advisors.md                   # if any
+│   └── cap-table.md                  # current ownership; pre/post-money modeling tools
+├── 05-legal/
+│   ├── incorporation.md              # state, date, structure
+│   ├── ip-assignment.md              # all founders/early contractors assigned IP
+│   └── material-contracts.md         # customer contracts, vendor MSAs, anything material
+├── 06-security/
+│   ├── security-policy.md            # what sub-skill 11 + 03 cover; written for non-technical
+│   ├── data-handling.md              # what data, where it lives, retention, encryption
+│   └── compliance.md                 # frameworks per sub-skill 03 vertical research
+└── 07-extras/
+    ├── press-mentions.md             # if any media coverage
+    └── future-fundraise-thinking.md  # how this round fits a longer-term arc (optional, advanced)
+```
+
+The agent generates each file in turn, populating from existing `STATE.yaml` decisions and `PROJECT.md` content where possible. For the financial model: provide a starter `.xlsx` with the conventional structure (Assumptions sheet, Revenue sheet, Costs sheet, Cash sheet) — founder fills in numbers OR the agent populates from the unit economics in `decisions.unit_economics` if computed.
+
+### What investors actually look at
+
+In a typical seed-stage diligence:
+1. **Deck + one-pager** (15 minutes — first read).
+2. **Metrics** (15 minutes — is this real?).
+3. **Founders** (30 minutes — bio + a call).
+4. **Cap table + financials** (15 minutes — clean? defensible?).
+5. **Product** (15 minutes — does the demo match the pitch?).
+
+Most early-stage investors don't read the security/compliance sections deeply unless the product is in a regulated space. But missing those sections signals lack of preparation.
+
+### Voice + completeness
+
+Each file is **2-5 pages max**, written in plain prose. Investors skim. Don't pad. The pitch deck already made the marketing case; the data room is for substantiating the claims:
+
+- **Specific** — "MAU grew from 12 to 234 in the last 90 days" not "growing fast."
+- **Sourced** — every metric links back to where it's measured (sub-skill 08 analytics tab, or a screenshot of the dashboard).
+- **Honest about gaps** — "Q3 retention dropped 8% after a UX change; we identified the cause in user interviews; v0.4 reverts the change. Future-state retention assumed to recover to Q2 levels." Beats hiding the dip.
+
+### Distribution
+
+Don't send the whole folder zipped. Use a data-room tool that tracks views: **Docsend** (free tier), **Notion** with viewer-permission links, or a Google Drive folder with view-only access by individual email. View-tracking is signal — investors who skim the deck and never open the data room are unlikely to convert.
+
+### Anti-patterns
+
+- A data room that's just the pitch deck plus marketing copy. Investors expect substance behind every claim.
+- Customer references without prior permission. ALWAYS get explicit ok before listing someone as a reference.
+- Financial models with no assumptions sheet. Investors want to see what you believe AND what you're guessing at.
+- Hiding the cap table until "the term sheet stage." Founders who hide caps signal complexity. Show it cleanly upfront.
+- Sending the data room before the founder has talked to the investor. The deck + intro + a meeting come first; data room is for the second meeting.
+
+## AUTONOMOUS — press kit at `/press`
+
+For any product launching publicly, journalists / podcasters / reviewers / aggregators land on `/press` looking for assets. Make it cheap for them to write about you.
+
+### Contents
+
+`/press` is a single page (or a small sub-site) with:
+
+- **Logos** in PNG (transparent bg, 1024×1024) and SVG. Both light-background and dark-background variants.
+- **Wordmark** versions of the logo (logo + product name, horizontal layout).
+- **Screenshots** at 1920×1200 of the 3 most-photogenic surfaces (landing, primary feature, hero result).
+- **Founder photos** — headshot at 1024×1024, action shot at 1920×1080.
+- **Product description in three lengths**:
+  - 1-line tagline (~12 words) — for headlines.
+  - 1-paragraph (~50 words) — for short articles, podcast intros.
+  - 1-page (~300 words) — for full feature pieces. Includes the "why now" + the founder story.
+- **Founder bio** — 100-word version.
+- **Press contact** — an email that's actually monitored. Same email as compliance contact (sub-skill 03) is fine.
+- **Recent coverage** — links to any prior press, in chronological order.
+- **Brand colors + typography** — the OKLCH primary + accent + the locked display font name. Lets writers match the visual identity in their pieces.
+
+### Implementation
+
+```tsx
+// app/press/page.tsx
+export default function PressPage() {
+  return (
+    <main className="max-w-4xl mx-auto px-6 py-12">
+      <h1 className="text-3xl font-semibold">Press kit</h1>
+      <p className="opacity-70 mt-2">Everything you need to write about <strong>{PRODUCT_NAME}</strong>.</p>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">Logos</h2>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <a href="/press/logo-on-light.svg" download className="card border border-base-300/60 p-4">
+            <img src="/press/logo-on-light.svg" alt="Logo on light" />
+            <span className="text-xs opacity-70 mt-2">SVG · download</span>
+          </a>
+          <a href="/press/logo-on-dark.svg" download className="card border border-base-300/60 p-4 bg-neutral text-neutral-content">
+            <img src="/press/logo-on-dark.svg" alt="Logo on dark" />
+            <span className="text-xs opacity-70 mt-2">SVG · download</span>
+          </a>
+          {/* PNG variants linked similarly */}
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">Screenshots</h2>
+        {/* gallery */}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">About</h2>
+        <h3 className="font-medium mt-4">One line</h3>
+        <blockquote className="border-l-4 border-primary pl-4 mt-1 italic">{ONE_LINE_TAGLINE}</blockquote>
+
+        <h3 className="font-medium mt-4">Paragraph</h3>
+        <p className="mt-1">{ONE_PARAGRAPH_DESCRIPTION}</p>
+
+        <h3 className="font-medium mt-4">Long form</h3>
+        <div className="prose mt-1">{ONE_PAGE_DESCRIPTION_HTML}</div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">Founder</h2>
+        <div className="flex gap-4 items-start mt-4">
+          <img src="/press/founder-headshot.jpg" alt={FOUNDER_NAME} className="w-32 h-32 rounded-full" />
+          <div>
+            <div className="font-medium">{FOUNDER_NAME}</div>
+            <div className="text-sm opacity-70">{FOUNDER_BIO_100}</div>
+            <div className="mt-2 flex gap-3 text-sm">
+              <a href="https://linkedin.com/in/...">LinkedIn</a>
+              <a href="https://x.com/...">X</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">Brand</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <div>
+            <div className="w-full aspect-square rounded" style={{ background: PRIMARY_HEX }} />
+            <div className="text-xs mt-2 font-mono">{PRIMARY_HEX}</div>
+            <div className="text-xs opacity-70">primary</div>
+          </div>
+          {/* accent, neutral, surface */}
+        </div>
+        <p className="mt-3 text-sm">Display font: <strong>{DISPLAY_FONT}</strong> · Body font: system stack</p>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold">Press contact</h2>
+        <p className="mt-1">For interviews, demos, or questions: <a href={`mailto:${PRESS_EMAIL}`}>{PRESS_EMAIL}</a></p>
+      </section>
+    </main>
+  );
+}
+```
+
+Linked from the footer (sub-skill 02 footer rule treats "Press" as an optional discoverable link, only shown when `/press` exists).
+
+### Anti-patterns
+
+- A `/press` page that just says "coming soon." Worse than no page — signals you're not serious.
+- Screenshots that are out of date (showing a UI that no longer exists). Update on every MAJOR release.
+- Press email that bounces. Test before launching the page.
+- Bio in the third person if the founder hates that ("Jane is a serial entrepreneur..."). Match the voice — first person is also fine.
+- No download buttons. Journalists need actual files, not screen-grab-from-website.
+
 ## AUTONOMOUS — assemble the launch sequence
 
 A coordinated launch typically gets 5&ndash;10&times; the initial traction of an uncoordinated one, and the work all happens **before** the launch button is pressed. The agent assembles the launch plan and walks the user through executing it.
@@ -310,5 +498,7 @@ If the user is using the configurator (Path B), the Discovery tab provides:
 - Launch playbook is written into `deliverables/launch-playbook.md` with picked surfaces + day-of timeline + pre-launch checklist.
 - For investor-ready: discovery process is set up, even if discovery itself happens post-deploy.
 - Discovery insights template (`PROJECT.md # Discovery insights`) exists as a placeholder ready for the first transcripts.
+- For `investor-ready`: full `deliverables/data-room/` folder generated with all 7 sections; financial-model starter included; founder has populated the placeholder fields. Distribution-tracking tool (Docsend / Notion / Drive view-only) chosen.
+- `/press` route ships with logos (SVG + PNG, light + dark variants), 3 screenshots at 1920×1200, founder photos, three description lengths, brand color + font, monitored press email. Linked from footer.
 
 You're done. Congratulate them &mdash; they shipped, and they have the packaging to share it.

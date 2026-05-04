@@ -747,6 +747,190 @@ If the user picked Google or GitHub, walk them through the console step-by-step.
 
 For OAuth users, the first sign-in inserts a `users` row with no `passwordHash`. Capture first/last name from the OAuth profile (Google provides `given_name` / `family_name`); ask for `intendedUse` and consent on a brief one-screen onboarding immediately after first sign-in if `users.intendedUse` is null and `userConsents` is empty.
 
+## AUTONOMOUS — B2B multi-tenant + RBAC (gated to B2B products with teams)
+
+For B2B products where users belong to organizations / workspaces / teams, the single-user auth model from above isn't enough. The agent ships organizations + memberships + roles + team invites — distinct from the admin-issued individual invites covered earlier.
+
+**When to run this**: `STATE.yaml decisions.vertical_classification` is `B2B` (small or Enterprise) AND the product has any concept of "team" / "workspace" / "organization." If the product is B2B but solo-user (e.g., a freelancer tool), skip this section.
+
+### Schema additions
+
+```ts
+// lib/db/schema.ts — extend
+export const organizations = pgTable('organizations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  slug: text('slug').notNull().unique(),               // URL-safe; used in /org/:slug routes
+  name: text('name').notNull(),
+  plan: text('plan').notNull().default('free'),        // 'free' | 'pro' | 'enterprise' — gated by sub-skill 09
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const memberships = pgTable('memberships', {
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(),                        // 'owner' | 'admin' | 'member' | 'guest'
+  invitedBy: uuid('invited_by').references(() => users.id),
+  joinedAt: timestamp('joined_at').defaultNow().notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.organizationId, t.userId] }) }));
+
+// Pending team invites (distinct from sub-skill 04's allowedEmails which is for admin-issued individual invites)
+export const teamInvites = pgTable('team_invites', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  email: text('email').notNull(),
+  role: text('role').notNull(),                        // role they'll get on accept
+  inviteTokenHash: text('invite_token_hash').notNull(),
+  invitedBy: uuid('invited_by').notNull().references(() => users.id),
+  invitedAt: timestamp('invited_at').defaultNow().notNull(),
+  acceptedAt: timestamp('accepted_at'),
+  expiresAt: timestamp('expires_at').notNull(),         // typically +7d
+});
+```
+
+### The four roles
+
+| Role | Can | Cannot |
+| --- | --- | --- |
+| **owner** | Everything: invite/remove members, change plan, transfer ownership, delete the org | (nothing — can do everything) |
+| **admin** | Invite/remove members (not owners), change settings, manage billing | Delete the org, transfer ownership |
+| **member** | Use the product, create / edit content within the org | Invite members, change billing, manage settings |
+| **guest** | View-only access to specific shared resources within the org | Create new content, see other members' content |
+
+The agent picks the right granularity per product. Most B2B MVPs need owner / admin / member only. Guest is for products with external collaborators.
+
+### Per-route auth — every authed route is org-scoped
+
+Every authed route checks BOTH user-auth AND org-membership-auth:
+
+```ts
+// lib/auth-helpers.ts
+import 'server-only';
+import { auth } from '@/auth';
+import { db } from '@/lib/db';
+import { memberships, organizations } from '@/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
+
+export async function requireMembership(orgSlug: string) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Response('auth_required', { status: 401 });
+
+  const [row] = await db.select({ org: organizations, role: memberships.role })
+    .from(memberships)
+    .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
+    .where(and(eq(organizations.slug, orgSlug), eq(memberships.userId, session.user.id)));
+
+  if (!row) throw new Response('not_a_member', { status: 403 });
+  return { user: session.user, org: row.org, role: row.role };
+}
+
+export function requireRole(actualRole: string, requiredRoles: string[]) {
+  if (!requiredRoles.includes(actualRole)) {
+    throw new Response('insufficient_role', { status: 403 });
+  }
+}
+```
+
+```ts
+// Example use in a route handler:
+export async function POST(req: Request, { params }: { params: { orgSlug: string } }) {
+  const { user, org, role } = await requireMembership(params.orgSlug);
+  requireRole(role, ['owner', 'admin']);  // only owner/admin can do this action
+  // ... handler body ...
+}
+```
+
+### URL pattern — org slug in the path
+
+Routes follow the convention `/org/:slug/...` (or `:slug.<domain>` subdomain pattern for true multi-tenancy at scale):
+
+- `/org/acme/dashboard`
+- `/org/acme/team`
+- `/org/acme/settings`
+
+The current org context is read from the URL, not from a session variable. This makes "switch workspace" trivial (change the URL) and "use multiple orgs in different tabs" work out of the box.
+
+### Workspace switcher in the header
+
+Per sub-skill 02's header rule (5-element layout), the workspace switcher lives in the **hamburger menu** as the first item, OR as a left-of-logo dropdown for SaaS dashboards (per `patterns/saas-dashboard.md`). Pattern:
+
+```tsx
+// components/WorkspaceSwitcher.tsx
+const userOrgs = await db.select({ org: organizations }).from(memberships)
+  .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
+  .where(eq(memberships.userId, user.id));
+
+return (
+  <select onChange={(e) => router.push(`/org/${e.target.value}/dashboard`)}>
+    {userOrgs.map(({ org }) => <option key={org.slug} value={org.slug}>{org.name}</option>)}
+  </select>
+);
+```
+
+### Team invite flow
+
+Distinct from admin-issued individual invites. Any owner/admin can invite teammates:
+
+```tsx
+// app/org/[slug]/team/page.tsx
+'use server';
+async function inviteAction(formData: FormData) {
+  const { user, org, role } = await requireMembership(orgSlug);
+  requireRole(role, ['owner', 'admin']);
+
+  const email = String(formData.get('email')).toLowerCase().trim();
+  const newRole = String(formData.get('role')) as 'admin' | 'member' | 'guest';
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  await db.insert(teamInvites).values({
+    organizationId: org.id, email, role: newRole, inviteTokenHash: tokenHash,
+    invitedBy: user.id, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+
+  await sendEmail({
+    to: email,
+    subject: `${user.firstName} invited you to ${org.name}`,
+    html: `<p>${user.firstName} invited you to join <strong>${org.name}</strong> as a ${newRole}.</p>
+           <p><a href="${process.env.AUTH_URL}/invite/accept?token=${token}">Accept invite</a></p>
+           <p><small>This invite expires in 7 days.</small></p>`,
+  });
+}
+```
+
+The `/invite/accept` route validates the token, signs the user up if needed (uses sub-skill 04's signup flow with the email pre-filled), then inserts the membership row + marks the invite accepted.
+
+### Per-org data isolation — RLS or query-level
+
+Every query against shared tables must filter by `organization_id`. Two ways to enforce:
+
+1. **Query-level (Drizzle)** — every `select`/`update`/`delete` includes `where(eq(<table>.organizationId, org.id))`. Simple, explicit, easy to forget.
+2. **Postgres Row-Level Security (RLS)** — define policies that filter by `organization_id` automatically based on a session variable. Harder to set up, impossible to forget. Recommended for B2B-Enterprise where data isolation is part of the trust story.
+
+The agent defaults to (1) for B2B-small (simpler, MVP-friendly) and (2) for B2B-Enterprise (compliance + trust requirement). Document the choice in `STATE.yaml decisions.tenant_isolation`.
+
+### Org deletion + member removal
+
+- **Owner deletes the org**: cascade-delete all org-scoped data (memberships, invites, content). Soft-delete the org row (`deleted_at`) for 30 days for accidental-delete recovery.
+- **Owner transfers ownership**: change `role` of another member from `admin` → `owner` and self → `admin` (or leave the org).
+- **Admin removes a member**: delete the membership row. Their content created within the org stays (assigned to a "former member" placeholder if needed).
+- **Member leaves voluntarily**: same as removal, initiated by them.
+
+### Anti-patterns
+
+- Storing the active org in the user's session. Breaks "different orgs in different tabs." URL-based context wins.
+- Letting non-owners delete the org. Owner-only with a "type the org name to confirm" speedbump.
+- Sending team invites that don't expire. Stale invites are a security smell. 7-day default.
+- Forgetting `organization_id` on a query. RLS prevents this; query-level review catches it. Both are defenses-in-depth.
+- One role for everyone (admin or none). Even small teams want owner / admin / member granularity.
+
+### Cross-references
+
+- patterns/saas-dashboard.md for the SaaS-specific UX patterns.
+- Sub-skill 09 monetization: per-org billing means the Stripe customer is the org, not the user.
+- Sub-skill 08 analytics: org-level KPIs distinct from user-level (e.g., "active orgs" alongside "active users").
+- Sub-skill 11 security: tenant isolation via RLS is part of the security posture for regulated industries.
+- Sub-skill 03 compliance: SOC 2 / Enterprise contracts almost always require RBAC + audit logs.
+
 ## Anti-patterns to avoid
 
 - Building custom auth UI before Auth.js is wired. Get the flow working with stock components first; restyle later.
@@ -777,5 +961,6 @@ For OAuth users, the first sign-in inserts a `users` row with no `passwordHash`.
 - If sub-skill 02 hasn't locked design tokens, the agent did not generate templates — it stopped and asked.
 - The DEV email-debug helper writes to `tmp/emails/` and is gitignored.
 - Lifecycle email work is scheduled via cron (`vercel.json` or platform equivalent), frequency-capped to 2 per user per 7-day window, and one-click-unsubscribable; the `users.email_lifecycle` column has been added and wired into the unsubscribe handler.
+- For B2B products with teams: organizations + memberships + teamInvites tables exist; requireMembership / requireRole helpers used on every authed route; workspace switcher present in header (per patterns/saas-dashboard.md); team invite flow (distinct from admin individual invites) ships an email + acceptance UI; tenant isolation strategy (query-level vs RLS) recorded in STATE.yaml.
 
 Move on to `05-ai-integration.md`.

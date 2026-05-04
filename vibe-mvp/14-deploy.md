@@ -228,6 +228,87 @@ decisions:
     - { version: "0.3.0", date: "2026-05-04", url: "https://example.com" }
 ```
 
+### 6. Ship CHANGELOG as a public `/changelog` route + first-sign-in surface
+
+The CHANGELOG is marketing surface, not just an internal artifact. Two surfaces ship at every MAJOR/MINOR release (PATCH-only releases skip both):
+
+#### Public `/changelog` route
+
+Renders `CHANGELOG.md` from the repo as a clean web page. Updates with every deploy.
+
+```tsx
+// app/changelog/page.tsx
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { compileMDX } from 'next-mdx-remote/rsc';      // or any markdown renderer
+
+export default async function ChangelogPage() {
+  const md = await readFile(path.join(process.cwd(), 'CHANGELOG.md'), 'utf8');
+  const { content } = await compileMDX({ source: md });
+  return (
+    <main className="max-w-3xl mx-auto px-6 py-12">
+      <header className="mb-8">
+        <h1 className="text-3xl font-semibold">What's new</h1>
+        <p className="opacity-70 mt-2">Every meaningful change to <strong>{PRODUCT_NAME}</strong>, newest first.</p>
+      </header>
+      <article className="prose prose-lg max-w-none">{content}</article>
+    </main>
+  );
+}
+
+export const metadata = { title: "What's new — <Product>", description: 'Recent updates and changes.' };
+```
+
+The route is linked from the footer (sub-skill 02 footer rule allows "Changelog" as an optional discoverable link, only shown when the route exists).
+
+#### "What's new" first-sign-in surface
+
+When a user signs in for the first time AFTER a MINOR or MAJOR release, show a small panel with the highlights from the latest CHANGELOG entry. Doesn't block — appears as a dismissible card on the dashboard or as a small toast on hover-of-the-bell:
+
+```tsx
+// components/WhatsNewCard.tsx — render conditionally on the first authed page after a release
+const userLastSeenVersion = await getUserLastSeenVersion(user.id);
+const currentVersion = process.env.APP_VERSION;   // or read from package.json at build
+
+if (compareSemver(userLastSeenVersion, currentVersion) < 0) {
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+      <h3 className="font-semibold">New in v{currentVersion}</h3>
+      <ul className="text-sm mt-2 space-y-1">
+        {/* Render Added + Changed bullets from the latest CHANGELOG entry — agent extracts at build time */}
+      </ul>
+      <button className="btn btn-sm btn-ghost mt-3" onClick={dismissAndUpdateLastSeen}>Got it</button>
+    </div>
+  );
+}
+```
+
+The agent **extracts** the latest CHANGELOG entry at build time and ships it as a static JSON in `public/whats-new.json` so the client doesn't need to parse markdown:
+
+```ts
+// scripts/extract-whats-new.ts (run as part of the build, before deploy)
+import { readFile, writeFile } from 'node:fs/promises';
+const md = await readFile('CHANGELOG.md', 'utf8');
+// Parse the first version section after [Unreleased]
+const match = md.match(/## \[(\d+\.\d+\.\d+)\] — (.+?)\n([\s\S]+?)(?=\n## \[|\n*$)/);
+if (match) {
+  await writeFile('public/whats-new.json', JSON.stringify({
+    version: match[1], date: match[2], body: match[3].trim(),
+  }));
+}
+```
+
+#### Mode-gate (skip both for `quick-ship`)
+
+For `quick-ship` mode, both surfaces are noise — the user has 5 friends looking at it, no need for changelog choreography. Skip both. For everything else, ship both.
+
+#### Anti-patterns
+
+- Writing the CHANGELOG entry only after release. The agent writes entries to the `## [Unreleased]` section throughout development; the deploy promotes them.
+- Public CHANGELOG with internal language ("refactored the AuthHandler dispatcher"). The CHANGELOG is for users + customers + investors. Use voice-consistent (sub-skill 02), user-visible language.
+- "What's new" card that BLOCKS interaction (modal). Always dismissible inline; user can ignore it.
+- Showing "What's new" for PATCH releases. PATCH = bug fixes; users don't need a celebration.
+
 ## Smoke test (all paths)
 
 - `curl -I <prod-url>` returns 200 and the security headers from sub-skill 09.
@@ -251,5 +332,6 @@ decisions:
 - A `# Deploy` section in `PROJECT.md` records: platform, production URL, GitHub repo URL, project/app name, and the redeploy command.
 - The user has the production URL in their hands.
 - `package.json` `version` is bumped for this release (see SKILL.md versioning rule); a matching `vX.Y.Z` git tag exists; `CHANGELOG.md` has a new section for this version with at least the user-visible bullets; the version + date is appended to `STATE.yaml decisions.released_versions`.
+- At MINOR/MAJOR releases, `/changelog` route is reachable + footer-linked; `public/whats-new.json` is generated at build; first-sign-in "what's new" surface displays for users on a previous version.
 
 Move on to `15-domain.md`.

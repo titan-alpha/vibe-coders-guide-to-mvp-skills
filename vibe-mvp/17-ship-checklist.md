@@ -136,6 +136,35 @@ Tick each one. Anything that fails goes back to the relevant sub-skill.
 - [ ] `tests/e2e/race.spec.ts` exists and passes. At minimum: double-submit, slow-response, and (if webhooks exist) out-of-order tests.
 - [ ] `tests/e2e/personas/<slug>.spec.ts` exists for every persona in `PROJECT.md # Audience`. Each passes.
 
+### Founder dogfooding (verifies the SKILL.md operating rule)
+
+The most-important post-launch behavior. Asked explicitly here because most founders default to "of course I'll use it" and then don't.
+
+> *"Are you going to use this every day starting tomorrow? If not, who will, and how will their feedback get back to you?"*
+
+Capture the answer in `STATE.yaml decisions.dogfooding_committed`:
+
+- **Yes**: agent confirms `dogfooding_committed: true`. Optionally: agent suggests a daily-reminder pattern (calendar event, push notification, or a simple "Did you use the product today?" weekly email to the founder).
+- **No, but someone else will**: agent records who, and the feedback channel (e.g., "co-founder Jane uses it daily; sends me Slack messages"). The agent asks: *"Want me to wire that channel to the configurator's Notes tab so observations get captured?"*
+- **No one will use it daily**: agent gently pushes back: *"Products that aren't dogfooded by anyone close to the team tend to drift. The build was real work — using it daily is how it gets better. Want to commit to 30 days of daily use, or revisit this?"* Record the answer.
+
+This isn't a yes/no checkbox; it's a conversation that ships discipline. The agent is the senior teammate making the case.
+
+### Kill list review (verifies the SKILL.md operating rule)
+
+The agent has accumulated `decisions.kill_list_candidates` throughout the build — features it noticed weren't earning their place (low usage, negative dogfooding notes, complexity-without-value). At ship checkpoint, surface the list:
+
+> *"Three features I'd consider removing before we ship:*
+> *1. <feature> — <reason>: <e.g., 'haven't used it in dogfooding, no user request mentioned it'>*
+> *2. <feature> — <reason>*
+> *3. <feature> — <reason>*
+>
+> *Removing a feature ships faster than adding one and removes maintenance debt forever. Want to remove any of these now? You can always add them back if usage data after launch suggests they were missed."*
+
+Most founders default to "keep everything." The agent's job is to make the case for cuts. For each "remove": agent deletes the code + the related tests + the schema columns (with a migration if the data is non-trivial), commits, bumps the version (likely a MAJOR since this is breaking).
+
+For features the user keeps despite the agent's recommendation: that's fine — record the rationale in `STATE.yaml decisions.kept_despite_kill_recommendation` so revisiting is easy after launch metrics arrive.
+
 ### Legal/social (only if relevant)
 
 - [ ] If you collect emails: a one-line privacy note exists ("we use your email to log you in; we don't share it").
@@ -153,5 +182,7 @@ Tell the user, in this order:
 
 - All checklist items are ticked or explicitly marked as not applicable.
 - The user has the URL, the repo, and the next-steps list in their hands.
+- Founder dogfooding commitment recorded in `STATE.yaml decisions.dogfooding_committed`. If yes: founder has the configurator Notes tab open. If "someone else will": that person + channel recorded. If no: the conversation happened explicitly.
+- Kill list review completed. Each candidate either removed (with code + tests + schema deletion + version bump) or explicitly kept (with rationale in `decisions.kept_despite_kill_recommendation`).
 
 Move on to `18-deliverables.md`.

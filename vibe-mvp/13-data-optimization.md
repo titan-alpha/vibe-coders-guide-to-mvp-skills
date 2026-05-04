@@ -135,6 +135,245 @@ Then `select * from recipes where title % 'rost chiken'` matches "Roast Chicken"
 - Search that queries the DB on every keystroke without debounce. Cripples the DB.
 - No empty-state UX. "No results" with no further action means the user bounces.
 
+## AUTONOMOUS — file / image upload pipeline (for products with user uploads)
+
+If the product accepts user-uploaded files (avatars at minimum, often more — recipe photos, listings, attachments), the agent ships the full pipeline. Skipping this means founders end up with one of: no uploads at all (poor UX), uploads broken at edge cases (file too big, wrong format, corrupted), or uploads as security holes (no virus posture, MIME spoofing).
+
+### Decision tree — which storage?
+
+| Need | Recommendation | Why |
+| --- | --- | --- |
+| Simple uploads, < 5 GB total expected, want zero ops | **Vercel Blob** | Free tier, integrates with Vercel deploys, simple API. Best for MVP-scale apps already on Vercel. |
+| Higher volume, want CDN built-in, edge-optimized | **Cloudflare R2** | S3-compatible API, no egress fees, generous free tier (10 GB + 10M reads/month). Best for image-heavy products. |
+| Power features (image transformations, signed URLs, image-specific metadata extraction) | **UploadThing** | Wraps storage + provides image processing + signed URLs out of the box. Slight markup over R2 but saves implementation time. |
+| Already AWS-heavy or need specific compliance (HIPAA/FedRAMP) | **AWS S3** + CloudFront | More setup; required for some regulated workloads. |
+| Self-host, full control, willing to manage | **MinIO** + Caddy | Only when there's a real reason to self-host (e.g., on-prem requirement). Adds ops burden. |
+
+The agent picks based on `STATE.yaml decisions` + the platform's expected scale. Default: Cloudflare R2 for image-heavy products; Vercel Blob for everything else.
+
+### The upload flow — three pieces
+
+1. **Browser uploads directly to storage** via signed URLs (NOT through your server). Keeps file bytes off your bandwidth + your function execution time.
+2. **Server validates + records the upload** after success.
+3. **Client renders** from a CDN-served URL.
+
+```ts
+// app/api/uploads/sign/route.ts — server generates a signed upload URL
+import { auth } from '@/auth';
+import { z } from 'zod';
+import { put } from '@vercel/blob';
+import { limiters, clientKey } from '@/lib/rate-limit';
+
+const Schema = z.object({
+  filename: z.string().min(1).max(200),
+  contentType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+  bytes: z.number().int().positive().max(10 * 1024 * 1024),  // 10 MB max
+});
+
+export async function POST(req: Request) {
+  // Rate limit BEFORE any work
+  const r = await limiters.general.limit(clientKey(req));
+  if (!r.success) return Response.json({ error: 'rate_limited' }, { status: 429 });
+
+  const session = await auth();
+  if (!session?.user) return Response.json({ error: 'auth_required' }, { status: 401 });
+
+  const parsed = Schema.safeParse(await req.json());
+  if (!parsed.success) return Response.json({ error: 'invalid', issues: parsed.error.issues }, { status: 400 });
+
+  // For Vercel Blob: server-side upload happens after the client posts the file to a route handler.
+  // For R2 / S3: generate a presigned PUT URL and return it; client uploads directly.
+  // Pattern below shows R2:
+  const key = `uploads/${session.user.id}/${crypto.randomUUID()}-${parsed.data.filename}`;
+  const presignedUrl = await s3.getSignedUrl('putObject', {
+    Bucket: process.env.R2_BUCKET, Key: key,
+    ContentType: parsed.data.contentType, ContentLength: parsed.data.bytes,
+    Expires: 60,  // 60-second window to upload
+  });
+  return Response.json({ uploadUrl: presignedUrl, key, publicUrl: `https://cdn.<domain>/${key}` });
+}
+```
+
+### Image processing — resize + format convert + EXIF strip
+
+For image uploads specifically, process after upload OR via on-the-fly transformation:
+
+- **Vercel Blob + next/image**: next/image handles resize + format negotiation (WebP/AVIF) on demand. Free at MVP scale.
+- **Cloudflare R2 + Cloudflare Images / Image Resizing**: same model on Cloudflare's edge.
+- **UploadThing**: built-in.
+
+For all paths: **strip EXIF data** before display (privacy — EXIF includes camera GPS coordinates, device info). With sharp:
+
+```ts
+// scripts/process-upload.ts (runs after upload completes, OR in a background job)
+import sharp from 'sharp';
+const buffer = await fetch(originalUrl).then(r => r.arrayBuffer());
+const processed = await sharp(Buffer.from(buffer))
+  .rotate()                     // honor EXIF orientation
+  .resize({ width: 2048, withoutEnlargement: true })
+  .webp({ quality: 85 })
+  .toBuffer();                  // EXIF stripped automatically by sharp's pipeline
+await uploadProcessedVersion(processed);
+```
+
+### Validate at the edge
+
+The browser-side validation is convenience; server-side validation is security. The signed-URL pattern above limits content type and size at sign-time. Additionally:
+
+- **Magic-number check** post-upload (on a webhook from the storage provider): a `.jpg` file might actually be HTML. Verify the file header matches the claimed type.
+- **Filename sanitization**: strip path separators, double-dots, control characters before storing.
+- **Size limit at the edge**: signed URL `ContentLength` bounds it; verify post-upload too.
+
+### Virus posture (when content is shared with other users)
+
+For files that other users will see/download (listing photos, shared documents), run a virus scan:
+
+- **ClamAV** for self-managed; runs as a sidecar service.
+- **Cloudflare Workers AI** has a malware-detection endpoint (paid).
+- **VirusTotal API** for URL-based scans (free tier, 4 lookups/min).
+
+Mark uploads as `pending_scan`; only flip to `published` after scan returns clean. This is post-MVP for many platforms; mandatory for any UGC platform with file uploads.
+
+### Schema starter
+
+```ts
+export const uploads = pgTable('uploads', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id),
+  storageKey: text('storage_key').notNull().unique(),     // path within the bucket
+  publicUrl: text('public_url').notNull(),                  // CDN-fronted URL
+  contentType: text('content_type').notNull(),
+  bytes: integer('bytes').notNull(),
+  width: integer('width'),                                   // for images, after processing
+  height: integer('height'),
+  status: text('status').notNull().default('pending'),       // 'pending' | 'processed' | 'flagged' | 'deleted'
+  metadata: jsonb('metadata'),                                // EXIF stripped; minimal residual
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+```
+
+### Anti-patterns
+
+- Routing uploads THROUGH your server. Wastes bandwidth + function execution time. Use signed URLs.
+- No size limit at sign-time. Users can upload 5 GB files and exhaust your quota.
+- No content-type whitelist. PDF or HTML uploaded as image becomes a vector.
+- Storing EXIF-rich images. Privacy leak (GPS coordinates from phone photos especially).
+- Public URLs that include the user ID in the path. Enumeration leak. Use UUIDs for object keys.
+
+### Cross-references
+
+- Rate limiting on `/api/uploads/sign` → sub-skill 11.
+- Image transformation + serving → sub-skill 12 (next/image).
+- Storage cost in cost monitoring → sub-skill 07 Tab 7 + sub-skill 11 platform caps.
+- For UGC products with file uploads, virus scanning is part of the moderation pipeline → sub-skill 05.
+
+## AUTONOMOUS — feature flags (the post-MVP iteration tool)
+
+A 30-minute add that pays compound interest. Lets the founder ship features behind a flag, roll out gradually, kill features without redeploying. Different from access modes (sub-skill 04, which gate users) — flags gate FEATURES.
+
+### Schema
+
+```ts
+// lib/db/schema.ts
+export const featureFlags = pgTable('feature_flags', {
+  key: text('key').primaryKey(),                      // e.g., 'new_dashboard', 'experimental_search'
+  enabled: boolean('enabled').notNull().default(false),
+  rolloutPct: integer('rollout_pct').notNull().default(100),  // when enabled, what % of users see it
+  scheduledActivation: timestamp('scheduled_activation'),     // null = manual; set = auto-flip-on at this time
+  description: text('description'),                            // human-readable: what this flag controls
+  addedBy: text('added_by').notNull().default('agent'),       // 'agent' | 'admin'
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+```
+
+### The `flag()` helper
+
+```ts
+// lib/feature-flag.ts
+import 'server-only';
+import { db } from '@/lib/db';
+import { featureFlags } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { unstable_cache } from 'next/cache';
+
+const getFlag = unstable_cache(
+  async (key: string) => {
+    const [row] = await db.select().from(featureFlags).where(eq(featureFlags.key, key));
+    return row ?? null;
+  },
+  ['feature-flag'],
+  { revalidate: 30, tags: ['feature-flags'] },  // 30s cache; admin changes invalidate via revalidateTag
+);
+
+/**
+ * Check whether a feature is enabled for a given user.
+ *
+ * Auto-registers the flag on first call so it appears in the admin Features tab —
+ * the agent doesn't need to manually add rows when introducing a new flag.
+ */
+export async function flag(key: string, userId?: string | null, description?: string): Promise<boolean> {
+  let row = await getFlag(key);
+  if (!row) {
+    // Auto-register: insert disabled by default; admin enables in Tab 9.
+    await db.insert(featureFlags).values({
+      key, enabled: false, rolloutPct: 100,
+      description: description ?? `Auto-registered by code on ${new Date().toISOString()}`,
+    }).onConflictDoNothing();
+    return false;
+  }
+  if (!row.enabled) return false;
+  if (row.rolloutPct >= 100) return true;
+  if (row.rolloutPct <= 0) return false;
+  // Stable hash bucket per (key, userId) so the same user gets a consistent answer.
+  if (!userId) return Math.random() * 100 < row.rolloutPct;  // anonymous = uncorrelated
+  const hash = simpleHash(`${key}:${userId}`) % 100;
+  return hash < row.rolloutPct;
+}
+
+function simpleHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+```
+
+### Usage in code
+
+```ts
+// Anywhere in a server component or route handler:
+import { flag } from '@/lib/feature-flag';
+import { auth } from '@/auth';
+
+export default async function Dashboard() {
+  const session = await auth();
+  const showNewDashboard = await flag('new_dashboard', session?.user?.id, 'Redesigned dashboard with the activity timeline');
+
+  return showNewDashboard ? <NewDashboard /> : <ClassicDashboard />;
+}
+```
+
+The first call to `flag('new_dashboard', ...)` auto-registers it in the `feature_flags` table with `enabled: false`. The flag appears in the Features admin tab (sub-skill 07 Tab 9). The founder enables it when ready. **No deploy required to flip features on or off.**
+
+### Patterns
+
+- **Kill switch**: name flag `kill_<feature>` (default `enabled: true`, set `enabled: false` to disable the feature in an emergency without a deploy).
+- **Gradual rollout**: enable + set `rolloutPct: 5` → 25 → 50 → 100 over days, watching `request_metrics` (sub-skill 08) for error rate and latency regressions.
+- **Scheduled activation**: schedule a flag to flip on at midnight UTC of a launch date. The Tab 9 cron handles the flip automatically.
+- **A/B test**: pair a flag with sub-skill 08 analytics — emit a `feature.<key>.shown` event with the flag value, compare conversion / retention by variant.
+
+### Anti-patterns
+
+- Hard-coding `if (process.env.NODE_ENV === 'development')` to gate features. Doesn't work post-deploy. Use a flag.
+- Removing flag-checked code in the same deploy that disables the flag. Always: (1) disable flag in production, (2) wait a week to confirm no reports, (3) remove the dead code in a separate deploy. Otherwise rolling back is harder.
+- Letting flags accumulate forever. Quarterly: review the flag list, delete fully-rolled-out or fully-killed flags + their checks.
+
+### Cross-references
+
+- Admin UI to toggle / schedule / set rollout → sub-skill 07 Tab 9.
+- Analytics integration for measuring flag effects → sub-skill 08.
+- The `kill_list` discipline (sub-skill 17 + SKILL.md) — flags make killing easy.
+
 ## DIALOGUE — propose fixes (use layman language)
 
 Come back to the user with a short list of the highest-impact fixes. Lead with what matters in plain words:
@@ -165,5 +404,6 @@ Apply what's agreed. Note rejected items in `# Open questions` for post-MVP revi
 - Real-time-feeling features use the right transport (polling/SSE/WebSockets) for their actual latency need.
 - A `# Data` section in `PROJECT.md` records the audit findings, the changes made, and any items deferred to post-MVP.
 - Search is wired (or explicitly skipped with reason) using the appropriate strategy from the decision tree.
+- `feature_flags` table exists; `flag()` helper is at `lib/feature-flag.ts`; auto-registration verified (calling `flag('test', null)` inserts a row with `enabled: false`); cross-references the Features tab in sub-skill 07 (Tab 9).
 
 Move on to `14-deploy.md`.
