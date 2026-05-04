@@ -96,6 +96,27 @@ decisions:
   discovery_done: false        # has the user already done customer discovery?
   discovery_planned: false     # for investor-ready, did they commit to do it?
 
+  # Product category — set by sub-skill 01; agent loads patterns/<category>.md
+  product_category: ""         # marketplace | content-platform | dev-tool | saas-dashboard | community | productivity-tool
+
+  # Founder dogfooding (per the SKILL.md operating rule)
+  dogfooding_committed: false  # founder said "yes I'll use this every day"
+  dogfooding_notes: []         # [{ date: "...", note: "..." }] — appended via configurator Notes tab or chat
+  # Each note is read in sub-skill 18's improvement-cycle alongside discovery transcripts.
+
+  # Kill list — features the agent or user noticed aren't earning their place
+  kill_list_candidates: []     # [{ feature: "...", reason: "...", added_at: "..." }] — proposed for removal at ship-checklist
+
+  # AI safety guardrails applied (per the SKILL.md operating rule)
+  ai_safety_guardrails: []     # [{ feature: "ai-summary", guardrails: ["domain-disclaimer", "prompt-injection-filter", "ai-disclosure", "output-moderation"] }]
+
+  # Feature flags (sub-skill 13's feature_flags table; the Features admin tab edits these at runtime)
+  features: []                 # [{ key: "new_dashboard", enabled: false, rollout_pct: 0, scheduled_activation: null, description: "..." }]
+
+  # Data seeding (sub-skill 02)
+  seeding_plan: ""             # one-line description of what's seeded (e.g., "100 starter recipes, 0 users, 0 reviews")
+  seeded_at: ""                # date the seed ran
+
   # Released versions (sub-skill 14, append-only)
   released_versions: []        # [{ version: "0.3.0", date: "...", url: "..." }]
 

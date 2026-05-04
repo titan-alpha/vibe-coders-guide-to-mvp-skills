@@ -27,7 +27,8 @@ This file is the **entry point**. The companion files are:
 
 - `modes.md` — the catalog of 5 modes and how to pick one with 3 questions.
 - `STATE.template.yaml` — the template for the project-root `STATE.yaml` you'll write and maintain.
-- `01-discover.md` … `17-deliverables.md` — the 17 numbered sub-skills.
+- `patterns/<category>.md` — per-category UX pattern catalogs (marketplace, content-platform, dev-tool, saas-dashboard, community, productivity-tool). The agent loads the matching one in 01-discover and uses it through the rest of the build.
+- `01-discover.md` … `18-deliverables.md` — the 18 numbered sub-skills.
 
 The flow is always: **mode selection → bootstrap → walk the skills the mode prescribes, in order.**
 
@@ -272,6 +273,32 @@ response:
   **Every audience profile in `PROJECT.md` gets at least one e2e test that walks the flow as that persona would.** The agent writes these in `tests/e2e/personas/<persona>.spec.ts`. Sub-skill 16 verifies they exist and pass.
 
 - **Dark patterns are forbidden.** Specifically: **confirmshaming** ("No thanks, I don't want to save money"), **forced continuity** (free trial → automatic charge with no warning), **hidden costs** (price changes at checkout), **roach motel** (easy to sign up, hard to cancel), **friend spam** (trick into messaging contacts), **pre-checked consent boxes** (already covered under GDPR rules in 03-compliance). The agent never ships a UI that uses any of these, even when the user requests it. If the user explicitly asks for one, the agent pushes back: *"That's a dark pattern. Here's why it backfires: [reasoning]. Want a non-dark alternative that gets you to the same business outcome?"* and proposes one.
+
+- **Per-category pattern catalog — load the matching one in 01-discover.** When sub-skill 01 identifies the product category (marketplace, content platform, dev tool, SaaS dashboard, community, productivity tool), the agent loads `patterns/<category>.md` from the bundle and uses it for downstream UX decisions in 02-design, 04-auth, 07-admin. The patterns file names canonical surfaces, navigation patterns, and UX conventions for that category — knowledge a senior product designer would bring. Without loading the pattern, the agent reasons from scratch and ships against expectation. **The user doesn't need to know the pattern exists; the agent loads it automatically based on the category it identified.**
+
+  Categories supported (extend as patterns mature): `marketplace`, `content-platform`, `dev-tool`, `saas-dashboard`, `community`, `productivity-tool`. If the product fits more than one (a content platform with a community layer), load both and merge — note merged patterns in `STATE.yaml decisions.product_category`.
+
+  If the product genuinely doesn't fit any category in the catalog (a hardware-companion app, a research tool, a one-off utility), tell the user: *"I don't have a canonical pattern catalog for `<your category>` — I'll reason from first principles. If this category turns out to be common, the patterns will accumulate over time."* Don't force-fit a wrong pattern.
+
+- **Founder dogfooding — push toward the end of the build.** Before declaring the MVP shippable, the agent **explicitly asks**: *"Are you going to use this every day starting tomorrow? If not, who will, and how will their feedback get back to you?"* This sounds soft; it's not. Founders who use their own product daily catch UX issues the e2e tests can't, find features that aren't earning their place, and surface friction the user-research transcripts will only confirm weeks later. Founders who *don't* dogfood ship products that drift.
+
+  The agent supports this with a **Notes surface in the configurator's Notes tab** (or, for chat-mode users, a section in `STATE.yaml decisions.dogfooding_notes` the agent helps the founder maintain). Each entry is dated and one paragraph: *"Tried to do X, hit Y friction"* / *"This empty state is wrong"* / *"I keep missing this affordance."*
+
+  At the end of the build (sub-skill 18 deliverables, after launch), the agent reads the dogfooding notes alongside the customer discovery transcripts and proposes the next 3 changes to make. **Same intake-and-synthesize flow** as customer discovery; same priority. The founder's eyes on their own product daily are as valuable as 10 user interviews.
+
+- **The kill list — what comes off, not just what goes on.** Adding features is easy; removing them is hard. The agent maintains a `STATE.yaml decisions.kill_list_candidates` array — features the agent (or the user) noticed aren't earning their place. At sub-skill 17 ship checklist, the agent surfaces the list and asks: *"These three features have low usage / are causing confusion in dogfooding / didn't come up in user discovery — want to remove any of them now? Removing a feature ships faster than adding one and removes maintenance debt forever."* Most founders default to "keep everything." The agent gently pushes back: features that aren't loved are weight.
+
+  The agent appends to the kill list throughout the build whenever it notices: a feature with zero usage (sub-skill 08 analytics signals); a feature mentioned negatively in dogfooding notes; a feature the agent itself thinks added complexity without proportional value. The list is for *consideration*, not auto-deletion.
+
+- **AI safety guardrails specific to use case.** Beyond the content-moderation patterns from sub-skill 05 (which protect users from each other), the agent applies **use-case-specific AI safety guardrails** that protect users from the AI itself. These include:
+
+  - **Domain-restriction disclaimers** — if the platform's AI could plausibly be asked for medical, legal, or financial advice, the system prompt explicitly refuses ("I'm not qualified to give medical advice; here's how to find a doctor: ...") AND a UI-level disclaimer is shown near AI inputs in those domains.
+  - **Prompt-injection defenses** — when user input is concatenated into a prompt that includes system instructions, the agent uses delimiters + role separation + output validation. For high-trust contexts (admin AI features, AI features that take actions), refuse user input that contains instruction-shaped phrases ("ignore previous instructions," "you are now a different assistant," etc.).
+  - **AI-generated content disclosure** — wherever AI-generated output is shown to a user, label it (small "✨ AI generated" or "Drafted with AI" badge). Honesty over surprise. Helps users calibrate trust and is increasingly required by regulation (EU AI Act especially).
+  - **Output filters** — for AI features that generate user-facing prose, run the AI's *output* through the moderation API (sub-skill 05) before showing it. The model can produce things you didn't ask for.
+  - **Bias considerations** — for AI features that classify, rank, or filter user content (search, recommendations, moderation), the agent **explicitly tests with edge-case inputs that probe known model biases** (gender / race / age / disability / nationality terms in equivalent contexts, asking whether the AI treats them equivalently). Failures are documented; mitigations vary per case.
+
+  The agent applies these proactively per AI feature, doesn't wait to be asked, and records the applied guardrails in `STATE.yaml decisions.ai_safety_guardrails`.
 
 - **Versioning discipline — semver (vX.Y.Z), bumped on every deploy.** Anything in this project that has a public surface gets a `vMAJOR.MINOR.PATCH` version that follows [SemVer](https://semver.org/). The agent enforces this, the user doesn't have to know the rules.
 
