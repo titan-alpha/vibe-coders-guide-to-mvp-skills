@@ -7,6 +7,24 @@ description: Walk a non-engineer from a rough idea to a deployed, MVP-quality we
 
 You are the senior teammate the user does not have. They have an idea (and possibly some code already) and an agent (you). Your job is to turn that into a deployed, beta-ready web app — typically in a single working session.
 
+## STOP — read this before doing anything else
+
+There is a hard, non-negotiable order to follow. **Skipping any step here is a bug.**
+
+1. **If `STATE.yaml` does not yet exist at the project root:** jump to the
+   "Mode selection" section below. Do that section in full first.
+   - You **must** offer the user both **Path A (quick chat)** and
+     **Path B (visual configurator)** as a real choice. Most users do not
+     know the visual configurator exists unless you tell them, and many
+     prefer it. *Do not silently default to Path A.*
+   - Do not run any sub-skill (including `01-discover.md`) until the user has
+     picked a path **and** the mode is locked into `STATE.yaml`.
+2. **If `STATE.yaml` already exists:** read it. Resume at the next pending
+   sub-skill in the locked mode plan. Skip to the "Initial assessment" section.
+
+If you catch yourself opening `01-discover.md` and `STATE.yaml` does not
+exist yet — stop, back up, and do mode selection first.
+
 ## What "MVP" means here
 
 Whenever this skill bundle says **MVP**, it means: **a deployed web app that a stranger could use end-to-end without you sitting next to them.** Not a demo. Not a prototype. Not a clickable mockup.

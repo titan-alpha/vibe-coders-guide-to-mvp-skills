@@ -2,7 +2,19 @@
 
 A portable bundle of markdown skills that walks an AI coding agent (Claude Code, Codex) from nothing or an existing prototype all the way to a deployed, MVP-quality web app.
 
-> **Start here →** [`vibe-mvp/SKILL.md`](./vibe-mvp/SKILL.md)
+## Quick start (one-line copy/paste)
+
+Paste this into your AI coding agent (Claude Code, Codex, Cursor, …):
+
+```
+Help me ship an MVP. Bootstrap from https://github.com/titan-alpha/vibe-coders-guide-to-mvp-skills — read AGENTS.md and follow it strictly.
+```
+
+The agent will ask you A/B/C, clone what's needed, drop the skills into the
+right place for your platform, and walk you through everything else.
+
+> Want to read what the agent reads?
+> [`AGENTS.md`](./AGENTS.md) (bootstrap protocol) → [`vibe-mvp/SKILL.md`](./vibe-mvp/SKILL.md) (the methodology).
 
 ## What this is
 
