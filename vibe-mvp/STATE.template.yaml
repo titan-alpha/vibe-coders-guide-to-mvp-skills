@@ -78,6 +78,27 @@ decisions:
   # Stack (set by sub-skill 02)
   stack: ""                    # e.g., "Next.js 15 + Tailwind v4 + DaisyUI + Drizzle + Postgres (Neon)"
 
+  # Cost ceilings (sub-skill 11) — per-service monthly USD cap. Agent sets
+  # platform alerts to fire at 80% of each ceiling.
+  cost_ceilings:
+    openai: 0                  # USD/month; 0 = no ceiling configured yet
+    vercel: 0
+    resend: 0
+    stripe_processing: 0       # acceptable Stripe fee burn
+    neon: 0
+    sentry: 0
+
+  # Error-tracking + alerts (sub-skill 11 + 07)
+  error_alerts_enabled: false  # send email to founder on level >= warn
+  error_alerts_email: ""       # defaults to the auth-skill privacy contact
+
+  # Customer discovery (sub-skill 18)
+  discovery_done: false        # has the user already done customer discovery?
+  discovery_planned: false     # for investor-ready, did they commit to do it?
+
+  # Released versions (sub-skill 14, append-only)
+  released_versions: []        # [{ version: "0.3.0", date: "...", url: "..." }]
+
 # ── Versioned consent documents (sub-skill 03) ────────────────────────
 document_versions:
   tos: ""                      # YYYY-MM-DD of last_updated in /terms

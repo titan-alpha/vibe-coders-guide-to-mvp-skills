@@ -245,6 +245,34 @@ response:
 
   **The carve-out for the user**: only ask the user to validate things that are *subjective* and *cannot be machine-checked*. Examples worth asking: *"Here's a screenshot of the welcome email I'd send &mdash; want me to send a real one to your inbox so you can confirm it looks right?"* / *"Does this color palette feel on-brand to you?"* / *"This 404 page copy &mdash; on-brand or too snarky?"*. Anything else &mdash; routes return 2xx, no console errors, contrast passes WCAG, the signup flow works end-to-end, the layout is unchanged at every breakpoint &mdash; the agent verifies itself and reports the result.
 
+- **Build first, validate after — except for `investor-ready`.** The traditional advice is "talk to 10 users before you write code." That advice predates coding agents that can ship a working MVP in a day. With this skill bundle, the cheap path is now: build the MVP, sit it in front of 10 target users one-on-one (Zoom, screen share, walk them through), capture what confused them and what excited them, then iterate. **The agent does NOT pre-validate by default.**
+
+  **Exception**: if the user picked `investor-ready` mode, the agent asks once: *"Have you done customer discovery already? If yes, share what you learned and I'll factor it in. If no, I want to flag that going to investors without 10+ user conversations on record is a real risk — the questions I see most fundraises stall on are 'who is this for' and 'how do you know they want it.' We can either build first and you do discovery alongside, or pause for a week of conversations. Which fits?"* Record the user's choice in `STATE.yaml`'s `decisions.discovery_done` (or `discovery_planned`) so the post-MVP discovery work in sub-skill 18 has the right context.
+
+  Either way, the post-MVP discovery process (1-on-1 sessions with the first 10 real users, transcripts in, agent insights out) is documented in sub-skill 18 and surfaced in the configurator's Discovery tab.
+
+- **Self-documenting platforms — hover-explain on every critical UI element.** A user should never wonder "what does this button do" or "what would this affect." Every interactive element with a non-obvious purpose (icon-only buttons, status badges, settings toggles, dashboard chart cards, anything where the visual alone doesn't fully convey function) gets a **`title` attribute** plus a **floating tooltip** on hover/focus that explains in one sentence what it does and (where useful) what would happen if clicked.
+
+  Implementation: a single `<Tooltip>` component using HTML `title` for the accessible fallback + a positioned floating panel for the styled version. Wraps any element. Sub-skill 02 ships the component; every later skill uses it on the new elements it introduces.
+
+  **A global "hide tooltips" toggle** lives in `/settings` (and persists to `localStorage`). Power users who don't need the helper layer can suppress it; new users see it by default. The agent never ships a UI where hover-explain is the *only* way to understand a control — labels and clear icons always come first; tooltips are reinforcement, not crutches.
+
+- **Race conditions and timing issues — surface them in design, lock them down in tests.** Many MVPs ship with subtle race-condition bugs: double-clicking submit creates two records; navigating away mid-save loses data; the success toast fires before the actual operation completes; two webhooks arrive out of order; an optimistic UI shows success while the server is still failing. The agent checks for these proactively.
+
+  **Per surface, ask**: can a user submit twice quickly? Can a network round-trip arrive out of order? Can two users hit the same record simultaneously? Can a webhook retry create a duplicate? Can a slow response leave the UI in a half-state? For every yes, the agent picks one of: idempotency keys (Stripe-style); UI-level submit lock (disable the button on first click); database constraint (UNIQUE on the right column); locking pattern (`SELECT ... FOR UPDATE`); event ordering check (compare `event.created` timestamps).
+
+  **Tests for it**: unit tests cover the obvious cases (calling `createOrder` twice with the same idempotency key returns one row, not two). E2E tests include a "double-click submit" pattern where Playwright clicks the same button twice in 50ms and asserts only one record was created. Race-condition tests live in `tests/e2e/race.spec.ts` so they're discoverable as a class.
+
+- **User-profile-aware E2E tests.** Generic e2e tests catch generic bugs. **Tests modeled after the actual user profiles from `PROJECT.md` catch the bugs your users will actually hit.** The agent reads the audience description (sub-skill 01) and writes a few persona-driven flow tests:
+
+  - For a recipe app whose audience is "casual home cooks 25–45": one persona is a hands-occupied cook (clicks with fingerprint smudges, pauses mid-flow to rinse). Test: the recipe page survives a 5-minute idle without losing scroll position.
+  - For a developer tool whose audience is "indie devs": one persona uses keyboard exclusively. Test: every flow completes without a mouse click.
+  - For a B2B SaaS whose audience is "ops managers at 50–500-person companies": one persona is invited (not signed up). Test: the invited-user signup variant works end-to-end.
+
+  **Every audience profile in `PROJECT.md` gets at least one e2e test that walks the flow as that persona would.** The agent writes these in `tests/e2e/personas/<persona>.spec.ts`. Sub-skill 16 verifies they exist and pass.
+
+- **Dark patterns are forbidden.** Specifically: **confirmshaming** ("No thanks, I don't want to save money"), **forced continuity** (free trial → automatic charge with no warning), **hidden costs** (price changes at checkout), **roach motel** (easy to sign up, hard to cancel), **friend spam** (trick into messaging contacts), **pre-checked consent boxes** (already covered under GDPR rules in 03-compliance). The agent never ships a UI that uses any of these, even when the user requests it. If the user explicitly asks for one, the agent pushes back: *"That's a dark pattern. Here's why it backfires: [reasoning]. Want a non-dark alternative that gets you to the same business outcome?"* and proposes one.
+
 - **Versioning discipline — semver (vX.Y.Z), bumped on every deploy.** Anything in this project that has a public surface gets a `vMAJOR.MINOR.PATCH` version that follows [SemVer](https://semver.org/). The agent enforces this, the user doesn't have to know the rules.
 
   **What gets versioned**: `package.json`'s `version` field (always); the deployed app (via git tag matching `package.json`); any HTTP API the user exposes (`/api/v1/...` URL prefix from day one); database migrations (numbered + immutable, never edit a shipped migration); the skill bundle the project was built with (recorded in `STATE.yaml # Decisions`).
