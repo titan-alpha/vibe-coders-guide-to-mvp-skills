@@ -37,7 +37,7 @@ Concretely, an MVP under this guide:
 - Treats AI features, chatbot, admin dashboard, monetization, compliance pages, data optimization, custom domain, and founder deliverables as **optional** — gated by user dialogue, included only when the product genuinely needs them.
 - Is allowed to be small. It is **not** allowed to be broken, embarrassing, unsafe, or inaccessible.
 
-If the user proposes a definition of "done" that's looser than this (e.g., "just get it working on my laptop"), gently push back: shipping locally to nobody is a prototype, not an MVP. The 17 sub-skills are the checklist that takes a prototype across that line.
+If the user proposes a definition of "done" that's looser than this (e.g., "just get it working on my laptop"), gently push back: shipping locally to nobody is a prototype, not an MVP. The 19 sub-skills are the checklist that takes a prototype across that line.
 
 ## How to use this skill
 
@@ -46,11 +46,11 @@ This file is the **entry point**. The companion files are:
 - `modes.md` — the catalog of 5 modes and how to pick one with 3 questions.
 - `STATE.template.yaml` — the template for the project-root `STATE.yaml` you'll write and maintain.
 - `patterns/<category>.md` — per-category UX pattern catalogs (marketplace, content-platform, dev-tool, saas-dashboard, community, productivity-tool). The agent loads the matching one in 01-discover and uses it through the rest of the build.
-- `01-discover.md` … `18-deliverables.md` — the 18 numbered sub-skills.
+- `01-discover.md` … `19-competitive-landscape.md` — the 19 numbered sub-skills (note: `19-competitive-landscape.md` runs *before* `18-deliverables.md` in modes that include both, because the deck reads its findings).
 
 The flow is always: **mode selection → bootstrap → walk the skills the mode prescribes, in order.**
 
-Modes exist because not every project needs all 17 sub-skills. A weekend prototype skips compliance and security; a content site skips auth; an investor-ready build does everything plus packaging. Forcing a one-page-form prototype through 17 sub-skills wastes time and disrespects the user.
+Modes exist because not every project needs all 19 sub-skills. A weekend prototype skips compliance and security; a content site skips auth; an investor-ready build does everything plus packaging. Forcing a one-page-form prototype through 19 sub-skills wastes time and disrespects the user.
 
 For each sub-skill you do execute:
 1. **Read it fully before acting.**
@@ -391,7 +391,7 @@ Then run the **Initial assessment** below before touching sub-skill `01-discover
 This is the most important opening move on any project that already has code. It builds shared understanding of where you both are *before* you make any changes.
 
 1. **Skim the codebase.** Read `package.json`, top-level files, the routes/pages directory, and obvious feature folders. Don't read every file — get the shape.
-2. **Walk the sub-skills in your locked mode** as checkpoints. (For `quick-ship` that's 5; for `full-mvp` it's all 17.) For each one, decide a status: ✅ done, 🟡 partial, ⬜ not started. This is a 5-minute pass, not a deep audit. Be willing to be wrong; the user will correct you.
+2. **Walk the sub-skills in your locked mode** as checkpoints. (For `quick-ship` that's 5; for `full-mvp` it's all 19.) For each one, decide a status: ✅ done, 🟡 partial, ⬜ not started. This is a 5-minute pass, not a deep audit. Be willing to be wrong; the user will correct you.
 3. **Report a one-screen summary** in this format, then stop and wait:
 
    ```

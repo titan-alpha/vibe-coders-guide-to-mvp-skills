@@ -84,7 +84,7 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=c or d, Q2=c, Q3=any. *("This is real and I want to do it right.")*
 
-**Skills (all 18)**: every sub-skill, in numbered order. Analytics (`08-analytics`) is included with both investor KPIs and product analytics enabled.
+**Skills (all 19)**: every sub-skill, in numbered order. Analytics (`08-analytics`) is included with both investor KPIs and product analytics enabled. Competitive landscape (`19-competitive-landscape`) is run before `18-deliverables` so its findings feed the pitch deck.
 
 **Skips**: nothing.
 
@@ -96,7 +96,7 @@ For each mode: the ordered skill list, what it skips, and why.
 
 **Picked when**: Q1=d, Q3=c or d. *("I'm raising capital or shipping with a deck.")*
 
-**Skills (all 18, with `08-analytics` and `18-deliverables` not optional)**: same as `full-mvp`, but `08-analytics` is required (investor KPIs are non-negotiable) and `18-deliverables` is required (pitch deck, investor one-pager, marketing one-pager, financial model, ad creative, launch announcement — all generated into `deliverables/`).
+**Skills (all 19, with `08-analytics`, `19-competitive-landscape`, and `18-deliverables` not optional)**: same as `full-mvp`, but `08-analytics` is required (investor KPIs are non-negotiable), `19-competitive-landscape` is required (the deck dies without a defensible competition slide), and `18-deliverables` is required (pitch deck, investor one-pager, marketing one-pager, financial model, ad creative, launch announcement — all generated into `deliverables/`).
 
 **Skips**: nothing.
 

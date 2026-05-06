@@ -47,7 +47,7 @@ Record the user's answer. For each selected deliverable, follow the architecture
   7. **Market** &mdash; TAM / SAM / SOM with sources.
   8. **Traction (if any)** &mdash; numbers from the admin dashboard (sub-skill 06), user count, any signal.
   9. **Business model** &mdash; how money comes in. Even at MVP, a hypothesis.
-  10. **Competition** &mdash; 2x2 positioning matrix or a "we / they" table.
+  10. **Competition** &mdash; 2x2 positioning matrix or a "we / they" table. **Populated from `docs/research/findings.md` and `docs/research/competitors/*.yaml`** (produced by sub-skill `19-competitive-landscape`). If those files don't exist when this skill runs, **stop and offer to run `19-competitive-landscape` first** &mdash; the deck is materially worse without it, and investors will spot it.
   11. **Team** &mdash; founder(s), why they can do this.
   12. **Ask** &mdash; what are you asking for (funding amount, introductions, pilot partners).
   13. **Appendix** &mdash; financial projections summary, architecture, references.
